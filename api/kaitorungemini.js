@@ -1,11 +1,13 @@
 async function chamarAPI(prompt) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY_FOR_KAITO_RUN}`;
-
-    const response = await fetch(url, {
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY_FOR_KAITORUN}`
+        },
         body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
+            model: 'deepseek-chat',
+            messages: [{ role: 'user', content: prompt }]
         })
     });
 
@@ -15,7 +17,7 @@ async function chamarAPI(prompt) {
         throw new Error(JSON.stringify(data));
     }
 
-    return data.candidates[0].content.parts[0].text.trim();
+    return data.choices[0].message.content.trim();
 }
 
 export default async function handler(req, res) {
@@ -47,7 +49,7 @@ ${texto}`;
             return res.status(200).json({ assunto: resultado });
         } catch (error) {
             console.error('Erro ao classificar:', error);
-            return res.status(500).json({ error: 'Erro ao chamar a API Gemini.', detalhe: error.message });
+            return res.status(500).json({ error: 'Erro ao chamar a API DeepSeek.', detalhe: error.message });
         }
     }
 
