@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY_FOR_KAITO_RUN);
 
 async function chamarAPI(prompt) {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
