@@ -7,48 +7,57 @@ const ANON_LIMIT        = 180;
 
 function monthKey() {
   const d = new Date();
-  return String(d.getMonth() + 1).padStart(2, '0') + d.getFullYear();
+  return String(d.getMonth() + 1).padStart(2, '0') + String(d.getFullYear());
 }
 
-// Lê o body do request como texto e faz JSON.parse
+function fsUrl(doc) {
+  return `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/email/${doc}?key=${FIREBASE_API_KEY}`;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', chunk => data += chunk);
-    req.on('end', () => {
-      try { resolve(JSON.parse(data)); }
-      catch { resolve({}); }
-    });
+    req.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
     req.on('error', reject);
   });
 }
 
 async function getAnonCount() {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/email/anon_mes?key=${FIREBASE_API_KEY}`;
-    const res  = await fetch(url);
+    const res  = await fetch(fsUrl('anon_mes'));
     const data = await res.json();
     const mk   = monthKey();
     return parseInt(data?.fields?.[mk]?.integerValue || '0');
   } catch { return 0; }
 }
 
+// Usa FieldTransform increment atômico do Firestore REST
 async function incrementCounter(anonymous) {
-  const mk   = monthKey();
+  const mk = monthKey();
   const docs = [
     { doc: anonymous ? 'anon_geral' : 'normal_geral', field: 'total' },
     { doc: anonymous ? 'anon_mes'   : 'normal_mes',   field: mk      },
   ];
+
   for (const { doc, field } of docs) {
     try {
-      const base = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/email/${doc}?key=${FIREBASE_API_KEY}`;
-      const read = await fetch(base);
-      const json = await read.json();
-      const current = parseInt(json?.fields?.[field]?.integerValue || '0');
-      await fetch(`${base}&updateMask.fieldPaths=${field}`, {
-        method:  'PATCH',
+      const commitUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents:commit?key=${FIREBASE_API_KEY}`;
+      const docPath   = `projects/${FIREBASE_PROJECT}/databases/(default)/documents/email/${doc}`;
+      await fetch(commitUrl, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ fields: { [field]: { integerValue: String(current + 1) } } })
+        body: JSON.stringify({
+          writes: [{
+            transform: {
+              document: docPath,
+              fieldTransforms: [{
+                fieldPath: '`' + field + '`',
+                increment: { integerValue: '1' }
+              }]
+            }
+          }]
+        })
       });
     } catch { /* não bloqueia o envio */ }
   }
@@ -71,11 +80,11 @@ async function sendViaEmailJS({ publicKey, serviceId, templateId, toEmail, fromN
   }
 }
 
-async function sendViaFormspree({ fsId, toEmail, fromName, fromEmail, subject, message }) {
+async function sendViaFormspree({ fsId, fromName, fromEmail, subject, message }) {
   const res = await fetch(`https://formspree.io/f/${fsId}`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ email: fromEmail, name: fromName, _subject: subject, message, to_email: toEmail })
+    body: JSON.stringify({ email: fromEmail, name: fromName, _subject: subject, message })
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -127,7 +136,7 @@ export default async function handler(req, res) {
       if (!fs_id)
         return res.status(400).json({ success: false, error: 'fs_id é obrigatório' });
       await sendViaFormspree({
-        fsId: fs_id, toEmail: to, fromName: from_name || 'Remetente',
+        fsId: fs_id, fromName: from_name || 'Remetente',
         fromEmail: from_email || 'nao-responder@anonmail.io', subject, message
       });
       await incrementCounter(false);
@@ -139,4 +148,4 @@ export default async function handler(req, res) {
   } catch (e) {
     return res.status(500).json({ success: false, error: e.message || 'Erro interno' });
   }
-};
+}
