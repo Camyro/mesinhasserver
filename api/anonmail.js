@@ -32,12 +32,11 @@ async function getAnonCount() {
   } catch { return 0; }
 }
 
-// Usa FieldTransform increment atômico do Firestore REST
-async function incrementCounter(anonymous) {
+async function incrementCounter() {
   const mk = monthKey();
   const docs = [
-    { doc: anonymous ? 'anon_geral' : 'normal_geral', field: 'total' },
-    { doc: anonymous ? 'anon_mes'   : 'normal_mes',   field: mk      },
+    { doc: 'anon_geral', field: 'total' },
+    { doc: 'anon_mes',   field: mk      },
   ];
 
   for (const { doc, field } of docs) {
@@ -63,32 +62,26 @@ async function incrementCounter(anonymous) {
   }
 }
 
-async function sendViaEmailJS({ publicKey, serviceId, templateId, toEmail, fromName, fromEmail, subject, message }) {
+async function sendViaEmailJS({ toEmail, subject, message }) {
   const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', 'origin': 'https://mesinhasserver.vercel.app' },
     body: JSON.stringify({
-      service_id:  serviceId,
-      template_id: templateId,
-      user_id:     publicKey,
-      template_params: { to_email: toEmail, from_name: fromName, from_email: fromEmail, subject, message }
+      service_id:  ANON_EJS_SERVICE,
+      template_id: ANON_EJS_TEMPLATE,
+      user_id:     ANON_EJS_KEY,
+      template_params: {
+        to_email:   toEmail,
+        from_name:  'Anônimo',
+        from_email: 'nao-responder@anonmail.io',
+        subject,
+        message
+      }
     })
   });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`EmailJS ${res.status}: ${text}`);
-  }
-}
-
-async function sendViaFormspree({ fsId, fromName, fromEmail, subject, message }) {
-  const res = await fetch(`https://formspree.io/f/${fsId}`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ email: fromEmail, name: fromName, _subject: subject, message })
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.error || `Formspree ${res.status}`);
   }
 }
 
@@ -101,49 +94,20 @@ export default async function handler(req, res) {
   if (req.method !== 'POST')    return res.status(405).json({ success: false, error: 'Use POST.' });
 
   const body = await readBody(req);
-  const { mode, to, subject, message, from_name, from_email, ejs_key, ejs_service, ejs_template, fs_id } = body;
+  const { to, subject, message } = body;
 
-  if (!mode)    return res.status(400).json({ success: false, error: 'mode é obrigatório' });
   if (!to)      return res.status(400).json({ success: false, error: 'to é obrigatório' });
   if (!subject) return res.status(400).json({ success: false, error: 'subject é obrigatório' });
   if (!message) return res.status(400).json({ success: false, error: 'message é obrigatório' });
 
   try {
-    if (mode === 'anon') {
-      const count = await getAnonCount();
-      if (count >= ANON_LIMIT)
-        return res.status(429).json({ success: false, error: `Limite de ${ANON_LIMIT} envios anônimos atingido` });
-      await sendViaEmailJS({
-        publicKey: ANON_EJS_KEY, serviceId: ANON_EJS_SERVICE, templateId: ANON_EJS_TEMPLATE,
-        toEmail: to, fromName: 'Anônimo', fromEmail: 'nao-responder@anonmail.io', subject, message
-      });
-      await incrementCounter(true);
-      return res.status(200).json({ success: true, mode: 'anon' });
-    }
+    const count = await getAnonCount();
+    if (count >= ANON_LIMIT)
+      return res.status(429).json({ success: false, error: `Limite de ${ANON_LIMIT} envios anônimos atingido` });
 
-    if (mode === 'emailjs') {
-      if (!ejs_key || !ejs_service || !ejs_template)
-        return res.status(400).json({ success: false, error: 'ejs_key, ejs_service e ejs_template são obrigatórios' });
-      await sendViaEmailJS({
-        publicKey: ejs_key, serviceId: ejs_service, templateId: ejs_template,
-        toEmail: to, fromName: from_name || 'Remetente', fromEmail: from_email || '', subject, message
-      });
-      await incrementCounter(false);
-      return res.status(200).json({ success: true, mode: 'emailjs' });
-    }
-
-    if (mode === 'formspree') {
-      if (!fs_id)
-        return res.status(400).json({ success: false, error: 'fs_id é obrigatório' });
-      await sendViaFormspree({
-        fsId: fs_id, fromName: from_name || 'Remetente',
-        fromEmail: from_email || 'nao-responder@anonmail.io', subject, message
-      });
-      await incrementCounter(false);
-      return res.status(200).json({ success: true, mode: 'formspree' });
-    }
-
-    return res.status(400).json({ success: false, error: `Mode inválido: "${mode}"` });
+    await sendViaEmailJS({ toEmail: to, subject, message });
+    await incrementCounter();
+    return res.status(200).json({ success: true, mode: 'anon' });
 
   } catch (e) {
     return res.status(500).json({ success: false, error: e.message || 'Erro interno' });
