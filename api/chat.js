@@ -21,7 +21,6 @@ const WINDOW_MS = 60000;
 async function checkLimit(userId) {
   const ref = db.collection("limits").doc(userId);
   const snap = await ref.get();
-
   const now = Date.now();
 
   if (!snap.exists) {
@@ -45,6 +44,16 @@ async function checkLimit(userId) {
 }
 
 export default async function handler(req, res) {
+  // ✅ Cabeçalhos CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // ✅ Responde o preflight (OPTIONS) imediatamente
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ reply: "Método não permitido" });
@@ -56,7 +65,6 @@ export default async function handler(req, res) {
       "unknown";
 
     const allowed = await checkLimit(ip);
-
     if (!allowed) {
       return res.status(429).json({
         reply: "⚠️ Limite atingido. Aguarde 1 minuto."
@@ -64,7 +72,6 @@ export default async function handler(req, res) {
     }
 
     const { message } = req.body;
-
     if (!message) {
       return res.status(400).json({
         reply: "Mensagem inválida"
@@ -82,16 +89,13 @@ export default async function handler(req, res) {
     );
 
     let reply = "Erro.";
-
     if (Array.isArray(response.data)) {
       reply = response.data[0]?.generated_text || reply;
     }
 
     return res.status(200).json({ reply });
-
   } catch (err) {
     console.error("ERRO REAL:", err);
-
     return res.status(500).json({
       reply: "❌ Erro interno da API"
     });
