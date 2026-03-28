@@ -1,7 +1,7 @@
 import axios from "axios";
 import admin from "firebase-admin";
 
-// 🔥 init firebase admin (server-safe)
+// 🔥 init firebase
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.applicationDefault()
@@ -36,20 +36,28 @@ async function checkLimit(userId) {
     return true;
   }
 
-  if (data.count >= LIMITE) {
-    return false;
-  }
+  if (data.count >= LIMITE) return false;
 
   await ref.update({ count: data.count + 1 });
   return true;
 }
 
 export default async function handler(req, res) {
-  try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ reply: "Método não permitido" });
-    }
+  // ✅ CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
+  // ✅ responde preflight
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ reply: "Método não permitido" });
+  }
+
+  try {
     const ip =
       req.headers["x-forwarded-for"] ||
       req.socket?.remoteAddress ||
@@ -90,7 +98,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ reply });
 
   } catch (err) {
-    console.error("ERRO REAL:", err);
+    console.error(err);
 
     return res.status(500).json({
       reply: "❌ Erro interno da API"
