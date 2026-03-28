@@ -13,7 +13,7 @@ const db = admin.firestore();
 
 // 🤖 IA
 const API_KEY = process.env.HF_KEY;
-const API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2";
+const API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.2";
 
 // ⚠️ limite
 const LIMITE = 20;
