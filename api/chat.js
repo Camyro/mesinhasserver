@@ -1,54 +1,13 @@
-import axios from "axios";
-import admin from "firebase-admin";
+const axios = require("axios");
 
-// 🔥 init firebase
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault()
-  });
-}
-
-const db = admin.firestore();
-
-// 🤖 IA
-const API_KEY = process.env.HF_KEY;
-const API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2";
-
-// ⚠️ limite
-const LIMITE = 20;
-const WINDOW_MS = 60000;
-
-async function checkLimit(userId) {
-  const ref = db.collection("limits").doc(userId);
-  const snap = await ref.get();
-
-  const now = Date.now();
-
-  if (!snap.exists) {
-    await ref.set({ count: 1, lastReset: now });
-    return true;
-  }
-
-  const data = snap.data();
-
-  if (now - data.lastReset > WINDOW_MS) {
-    await ref.set({ count: 1, lastReset: now });
-    return true;
-  }
-
-  if (data.count >= LIMITE) return false;
-
-  await ref.update({ count: data.count + 1 });
-  return true;
-}
-
-export default async function handler(req, res) {
-  // ✅ CORS headers
+// ⚠️ handler correto (CommonJS)
+module.exports = async (req, res) => {
+  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // ✅ responde preflight
+  // ✅ preflight
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -58,19 +17,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    const ip =
-      req.headers["x-forwarded-for"] ||
-      req.socket?.remoteAddress ||
-      "unknown";
-
-    const allowed = await checkLimit(ip);
-
-    if (!allowed) {
-      return res.status(429).json({
-        reply: "⚠️ Limite atingido. Aguarde 1 minuto."
-      });
-    }
-
     const { message } = req.body;
 
     if (!message) {
@@ -80,11 +26,11 @@ export default async function handler(req, res) {
     }
 
     const response = await axios.post(
-      API_URL,
+      "https://api-inference.huggingface.co/models/google/gemma-2b-it",
       { inputs: message },
       {
         headers: {
-          Authorization: `Bearer ${API_KEY}`
+          Authorization: `Bearer ${process.env.HF_KEY}`
         }
       }
     );
@@ -98,10 +44,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ reply });
 
   } catch (err) {
-    console.error(err);
+    console.error("ERRO:", err);
 
     return res.status(500).json({
-      reply: "❌ Erro interno da API"
+      reply: "❌ Erro interno"
     });
   }
-}
+};
