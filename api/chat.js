@@ -17,7 +17,7 @@ const MODEL   = "meta-llama/Llama-3.1-8B-Instruct:cerebras";
 
 // ⚠️ Limites
 const LIMITE_MIN   = 20;    // req/min por IP
-const LIMITE_DIA   = 200;   // req/dia global (todos os usuários)
+const LIMITE_DIA   = 500;   // req/dia global (todos os usuários)
 const WINDOW_MS    = 60000; // 1 minuto
 
 // Chave do dia no formato DDMMYYYY
