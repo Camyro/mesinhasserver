@@ -13,7 +13,7 @@ const db = admin.firestore();
 
 // 🤖 IA
 const API_KEY = process.env.HF_KEY;
-const API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3";
+const API_URL = "https://router.huggingface.co/hf-inference/models/microsoft/Phi-3-mini-4k-instruct";
 
 // ⚠️ limite
 const LIMITE = 20;
@@ -81,17 +81,25 @@ export default async function handler(req, res) {
 
     const response = await axios.post(
       API_URL,
-      { inputs: message },
+      {
+        model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        messages: [{ role: "user", content: message }],
+        max_tokens: 512
+      },
       {
         headers: {
-          Authorization: `Bearer ${API_KEY}`
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json"
         }
       }
     );
 
     let reply = "Erro.";
-    if (Array.isArray(response.data)) {
-      reply = response.data[0]?.generated_text || reply;
+    const data = response.data;
+    if (data?.choices?.[0]?.message?.content) {
+      reply = data.choices[0].message.content;
+    } else if (Array.isArray(data)) {
+      reply = data[0]?.generated_text || reply;
     }
 
     return res.status(200).json({ reply });
