@@ -13,7 +13,7 @@ const db = admin.firestore();
 
 // 🤖 IA — modelo gratuito e estável no HuggingFace
 const API_KEY = process.env.HF_KEY;
-const API_URL = "https://router.huggingface.co/hf-inference/models/google/gemma-2-2b-it/v1/chat/completions";
+const API_URL = "https://router.huggingface.co/hf-inference/v1/chat/completions";
 
 // ⚠️ limite
 const LIMITE = 20;
