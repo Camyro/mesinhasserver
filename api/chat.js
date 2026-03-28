@@ -11,18 +11,19 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// 🤖 IA — modelo gratuito e estável no HuggingFace
+// 🤖 IA — URL correta do router HuggingFace
 const API_KEY = process.env.HF_KEY;
-const API_URL = "https://router.huggingface.co/hf-inference/v1/chat/completions";
+const API_URL = "https://router.huggingface.co/v1/chat/completions";
+const MODEL   = "meta-llama/Llama-3.1-8B-Instruct:cerebras"; // grátis e rápido
 
-// ⚠️ limite
-const LIMITE = 20;
+// ⚠️ limite de requisições
+const LIMITE    = 20;
 const WINDOW_MS = 60000;
 
 async function checkLimit(userId) {
-  const ref = db.collection("limits").doc(userId);
+  const ref  = db.collection("limits").doc(userId);
   const snap = await ref.get();
-  const now = Date.now();
+  const now  = Date.now();
 
   if (!snap.exists) {
     await ref.set({ count: 1, lastReset: now });
@@ -36,9 +37,7 @@ async function checkLimit(userId) {
     return true;
   }
 
-  if (data.count >= LIMITE) {
-    return false;
-  }
+  if (data.count >= LIMITE) return false;
 
   await ref.update({ count: data.count + 1 });
   return true;
@@ -50,26 +49,19 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // ✅ Responde o preflight (OPTIONS) imediatamente
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  // ✅ Preflight
+  if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ reply: "Método não permitido" });
     }
 
-    const ip =
-      req.headers["x-forwarded-for"] ||
-      req.socket?.remoteAddress ||
-      "unknown";
+    const ip = req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown";
 
     const allowed = await checkLimit(ip);
     if (!allowed) {
-      return res.status(429).json({
-        reply: "⚠️ Limite atingido. Aguarde 1 minuto."
-      });
+      return res.status(429).json({ reply: "⚠️ Limite atingido. Aguarde 1 minuto." });
     }
 
     const { message } = req.body;
@@ -80,7 +72,7 @@ export default async function handler(req, res) {
     const response = await axios.post(
       API_URL,
       {
-        model: "google/gemma-2-2b-it",
+        model: MODEL,
         messages: [{ role: "user", content: message }],
         max_tokens: 512
       },
