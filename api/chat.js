@@ -113,7 +113,7 @@ export default async function handler(req, res) {
     const globalOk = await checkAndIncrementGlobal();
     if (!globalOk) {
       return res.status(429).json({
-        reply: "⚠️ Limite diário global de 200 requisições atingido. Volta amanhã!",
+        reply: "⚠️ Limite diário global de 500 requisições atingido. Volta amanhã!",
         model: MODEL,
         limitType: "global_day"
       });
