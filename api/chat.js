@@ -1,5 +1,5 @@
-const axios = require("axios");
-const admin = require("firebase-admin");
+import axios from "axios";
+import admin from "firebase-admin";
 
 // 🔥 init firebase admin com credencial via env var (funciona na Vercel)
 if (!admin.apps.length) {
@@ -44,7 +44,7 @@ async function checkLimit(userId) {
   return true;
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // ✅ Cabeçalhos CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
