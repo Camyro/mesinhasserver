@@ -1,10 +1,11 @@
 const axios = require("axios");
 const admin = require("firebase-admin");
 
-// 🔥 init firebase admin (server-safe)
+// 🔥 init firebase admin com credencial via env var (funciona na Vercel)
 if (!admin.apps.length) {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   admin.initializeApp({
-    credential: admin.credential.applicationDefault()
+    credential: admin.credential.cert(serviceAccount)
   });
 }
 
