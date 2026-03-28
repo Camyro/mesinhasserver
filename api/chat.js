@@ -11,9 +11,9 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// 🤖 IA
+// 🤖 IA — modelo gratuito e estável no HuggingFace
 const API_KEY = process.env.HF_KEY;
-const API_URL = "https://router.huggingface.co/hf-inference/models/microsoft/Phi-3-mini-4k-instruct";
+const API_URL = "https://router.huggingface.co/hf-inference/models/google/gemma-2-2b-it/v1/chat/completions";
 
 // ⚠️ limite
 const LIMITE = 20;
@@ -74,15 +74,13 @@ export default async function handler(req, res) {
 
     const { message } = req.body;
     if (!message) {
-      return res.status(400).json({
-        reply: "Mensagem inválida"
-      });
+      return res.status(400).json({ reply: "Mensagem inválida" });
     }
 
     const response = await axios.post(
       API_URL,
       {
-        model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        model: "google/gemma-2-2b-it",
         messages: [{ role: "user", content: message }],
         max_tokens: 512
       },
@@ -94,19 +92,11 @@ export default async function handler(req, res) {
       }
     );
 
-    let reply = "Erro.";
-    const data = response.data;
-    if (data?.choices?.[0]?.message?.content) {
-      reply = data.choices[0].message.content;
-    } else if (Array.isArray(data)) {
-      reply = data[0]?.generated_text || reply;
-    }
-
+    const reply = response.data?.choices?.[0]?.message?.content || "Sem resposta.";
     return res.status(200).json({ reply });
+
   } catch (err) {
     console.error("ERRO REAL:", err);
-    return res.status(500).json({
-      reply: "❌ Erro interno da API"
-    });
+    return res.status(500).json({ reply: "❌ Erro interno da API" });
   }
 }
