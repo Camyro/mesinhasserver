@@ -45,6 +45,17 @@ function dayKey() {
     + d.getUTCFullYear();
 }
 
+// Valida e normaliza o histórico recebido
+function sanitizeHistory(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter(m => m && typeof m.role === "string" && typeof m.content === "string")
+    .map(m => ({
+      role:    m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content).slice(0, 4000) // segurança: limita tamanho por msg
+    }));
+}
+
 // ══════════════════════════════════════════════
 //  RATE LIMIT POR IP (janela 1 min)
 // ══════════════════════════════════════════════
@@ -203,7 +214,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ reply: "Método não permitido", model: "-" });
 
   try {
-    const { message, system, webSearch: clientWantsWeb, forceEngine } = req.body;
+    const {
+      message,
+      system,
+      history,          // ← NOVO: array de {role, content} com histórico da conversa
+      webSearch: clientWantsWeb,
+      forceEngine
+    } = req.body;
 
     if (!message)
       return res.status(400).json({ reply: "Mensagem inválida", model: "-" });
@@ -237,8 +254,16 @@ export default async function handler(req, res) {
       });
 
     // ── Monta histórico ──
+    // Ordem: [system] → [histórico anterior] → [mensagem atual]
     const msgs = [];
     if (system) msgs.push({ role: "system", content: system });
+
+    // Injeta histórico da conversa (resumo + mensagens recentes)
+    const cleanHistory = sanitizeHistory(history);
+    if (cleanHistory.length > 0) {
+      msgs.push(...cleanHistory);
+    }
+
     msgs.push({ role: "user", content: message });
 
     // ══════════════════════════════════════════
