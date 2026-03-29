@@ -27,15 +27,15 @@ const MISTRAL_LABEL = "Mistral · web search";
 // ══════════════════════════════════════════════
 //  LIMITES
 // ══════════════════════════════════════════════
-const LIM_IP_MIN    = 20;              // req/min por IP
-const LIM_CB_DIA    = 800;            // Cerebras req/dia global
-const LIM_HF_DIA    = 200;            // HuggingFace req/dia global
-const LIM_MS_4H     = 30;             // Mistral req/4h global
-const WIN_1MIN      = 60_000;
-const WIN_4H        = 4 * 3_600_000;
+const LIM_IP_MIN = 20;
+const LIM_CB_DIA = 800;
+const LIM_HF_DIA = 200;
+const LIM_MS_4H  = 30;
+const WIN_1MIN   = 60_000;
+const WIN_4H     = 4 * 3_600_000;
 
 // ══════════════════════════════════════════════
-//  HELPERS DE CHAVE
+//  HELPERS
 // ══════════════════════════════════════════════
 function dayKey() {
   const d = new Date();
@@ -46,7 +46,7 @@ function dayKey() {
 }
 
 // ══════════════════════════════════════════════
-//  RATE LIMIT POR IP  (janela 1 min)
+//  RATE LIMIT POR IP (janela 1 min)
 // ══════════════════════════════════════════════
 async function checkIpLimit(ip) {
   const key  = "ip_" + ip.replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 80);
@@ -67,11 +67,11 @@ async function checkIpLimit(ip) {
 //  LIMITE DIÁRIO CEREBRAS
 // ══════════════════════════════════════════════
 async function checkCerebras() {
-  const dk   = dayKey();
+  const dk    = dayKey();
   const field = `cb_${dk}`;
-  const ref  = db.collection("chat").doc("limits");
-  const snap = await ref.get();
-  const used = snap.exists ? (snap.data()[field] || 0) : 0;
+  const ref   = db.collection("chat").doc("limits");
+  const snap  = await ref.get();
+  const used  = snap.exists ? (snap.data()[field] || 0) : 0;
   if (used >= LIM_CB_DIA) return { ok: false, used };
   await ref.set({ [field]: admin.firestore.FieldValue.increment(1) }, { merge: true });
   return { ok: true, used: used + 1 };
@@ -115,7 +115,6 @@ async function checkMistral() {
 
 // ══════════════════════════════════════════════
 //  DETECÇÃO AUTOMÁTICA: precisa de web search?
-//  Pergunta ao Cerebras (5 tokens, rápido e barato)
 // ══════════════════════════════════════════════
 async function detectWebSearch(message) {
   try {
@@ -204,7 +203,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ reply: "Método não permitido", model: "-" });
 
   try {
-    const { message, system, webSearch: clientWantsWeb } = req.body;
+    const { message, system, webSearch: clientWantsWeb, forceEngine } = req.body;
 
     if (!message)
       return res.status(400).json({ reply: "Mensagem inválida", model: "-" });
@@ -215,21 +214,22 @@ export default async function handler(req, res) {
       const snap = await db.collection("chat").doc("limits").get();
       const d    = snap.exists ? snap.data() : {};
       return res.status(200).json({
-        reply:        "",
-        model:        CEREBRAS_MODEL,
-        cbUsed:       d[`cb_${dk}`]      || 0,
-        cbMax:        LIM_CB_DIA,
-        hfUsed:       d[`hf_${dk}`]      || 0,
-        hfMax:        LIM_HF_DIA,
-        msUsed:       d.ms_win_count     || 0,
-        msMax:        LIM_MS_4H,
-        msWinStart:   d.ms_win_start     || 0
+        reply:      "",
+        model:      CEREBRAS_MODEL,
+        engine:     "cerebras",
+        cbUsed:     d[`cb_${dk}`]  || 0,
+        cbMax:      LIM_CB_DIA,
+        hfUsed:     d[`hf_${dk}`]  || 0,
+        hfMax:      LIM_HF_DIA,
+        msUsed:     d.ms_win_count  || 0,
+        msMax:      LIM_MS_4H,
+        msWinStart: d.ms_win_start  || 0
       });
     }
 
     // ── Rate limit por IP ──
-    const ip   = req.headers["x-forwarded-for"]?.split(",")[0].trim()
-               || req.socket?.remoteAddress || "unknown";
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim()
+             || req.socket?.remoteAddress || "unknown";
     if (!(await checkIpLimit(ip)))
       return res.status(429).json({
         reply: "⚠️ Você atingiu 20 requisições por minuto. Aguarde 1 minuto.",
@@ -242,10 +242,60 @@ export default async function handler(req, res) {
     msgs.push({ role: "user", content: message });
 
     // ══════════════════════════════════════════
-    //  DECISÃO: web search?
-    //  1. cliente marcou explicitamente
-    //  2. mensagem contém palavras-chave de busca
-    //  3. modelo detecta necessidade automaticamente
+    //  ROTA FORÇADA — cliente escolheu um engine
+    // ══════════════════════════════════════════
+    if (forceEngine === "cerebras") {
+      const cl = await checkCerebras();
+      if (!cl.ok)
+        return res.status(429).json({
+          reply: "⚠️ Limite diário do Cerebras atingido. Tente outro modelo.",
+          model: "-", limitType: "daily_cerebras"
+        });
+      try {
+        const { reply, model } = await callCerebras(msgs);
+        return res.status(200).json({ reply, model, engine: "cerebras", cbUsed: cl.used, cbMax: LIM_CB_DIA });
+      } catch (e) {
+        console.error("Cerebras falhou:", e?.response?.data || e.message);
+        return res.status(500).json({ reply: "❌ Cerebras indisponível no momento.", model: "-" });
+      }
+    }
+
+    if (forceEngine === "huggingface") {
+      const hl = await checkHF();
+      if (!hl.ok)
+        return res.status(429).json({
+          reply: "⚠️ Limite diário do HuggingFace atingido. Tente outro modelo.",
+          model: "-", limitType: "daily_hf"
+        });
+      try {
+        const { reply, model } = await callHF(msgs);
+        return res.status(200).json({ reply, model, engine: "huggingface", hfUsed: hl.used, hfMax: LIM_HF_DIA });
+      } catch (e) {
+        console.error("HuggingFace falhou:", e?.response?.data || e.message);
+        return res.status(500).json({ reply: "❌ HuggingFace indisponível no momento.", model: "-" });
+      }
+    }
+
+    if (forceEngine === "mistral") {
+      const ml = await checkMistral();
+      if (!ml.ok) {
+        const mins = Math.ceil(ml.resetIn / 60000);
+        return res.status(429).json({
+          reply: `⚠️ Limite do Mistral atingido. Libera em ~${mins} min.`,
+          model: "-", limitType: "mistral_4h"
+        });
+      }
+      try {
+        const { reply, model } = await callMistral(msgs);
+        return res.status(200).json({ reply, model, engine: "mistral", msUsed: ml.used, msMax: LIM_MS_4H });
+      } catch (e) {
+        console.error("Mistral falhou:", e?.response?.data || e.message);
+        return res.status(500).json({ reply: "❌ Mistral indisponível no momento.", model: "-" });
+      }
+    }
+
+    // ══════════════════════════════════════════
+    //  ROTA AUTOMÁTICA — decide engine por si só
     // ══════════════════════════════════════════
     const keywordHit = /\b(pesquisa(?:r)?|busca(?:r)?|search|notícia|noticia|noticias?|atual(?:iza)?|recente|hoje|agora|últim|ultim|2024|2025|2026)\b/i
       .test(message);
@@ -258,16 +308,12 @@ export default async function handler(req, res) {
       if (ml.ok) {
         try {
           const { reply, model } = await callMistral(msgs);
-          return res.status(200).json({
-            reply, model, engine: "mistral",
-            msUsed: ml.used, msMax: LIM_MS_4H
-          });
+          return res.status(200).json({ reply, model, engine: "mistral", msUsed: ml.used, msMax: LIM_MS_4H });
         } catch (e) {
           console.error("Mistral falhou:", e?.response?.data || e.message);
           // Mistral falhou → cai no fluxo normal
         }
       } else {
-        // Limite Mistral atingido → avisa mas ainda responde via Cerebras/HF
         const mins = Math.ceil(ml.resetIn / 60000);
         msgs[msgs.length - 1].content +=
           `\n\n[Sistema: pesquisa web indisponível — limite de ${LIM_MS_4H} req/4h atingido, ` +
@@ -275,26 +321,18 @@ export default async function handler(req, res) {
       }
     }
 
-    // ══════════════════════════════════════════
-    //  ROTA PRINCIPAL: Cerebras
-    // ══════════════════════════════════════════
+    // Cerebras
     const cl = await checkCerebras();
     if (cl.ok) {
       try {
         const { reply, model } = await callCerebras(msgs);
-        return res.status(200).json({
-          reply, model, engine: "cerebras",
-          cbUsed: cl.used, cbMax: LIM_CB_DIA
-        });
+        return res.status(200).json({ reply, model, engine: "cerebras", cbUsed: cl.used, cbMax: LIM_CB_DIA });
       } catch (e) {
         console.error("Cerebras falhou:", e?.response?.data || e.message);
-        // Cerebras falhou → tenta HF
       }
     }
 
-    // ══════════════════════════════════════════
-    //  FALLBACK: HuggingFace
-    // ══════════════════════════════════════════
+    // HuggingFace fallback
     const hl = await checkHF();
     if (!hl.ok)
       return res.status(429).json({
@@ -303,10 +341,7 @@ export default async function handler(req, res) {
       });
 
     const { reply, model } = await callHF(msgs);
-    return res.status(200).json({
-      reply, model, engine: "huggingface",
-      hfUsed: hl.used, hfMax: LIM_HF_DIA
-    });
+    return res.status(200).json({ reply, model, engine: "huggingface", hfUsed: hl.used, hfMax: LIM_HF_DIA });
 
   } catch (err) {
     console.error("ERRO GERAL:", err?.response?.data || err.message || err);
