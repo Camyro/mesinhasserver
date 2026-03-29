@@ -17,7 +17,7 @@ const MODEL   = "meta-llama/Llama-3.1-8B-Instruct:cerebras";
 
 // ⚠️ Limites
 const LIMITE_MIN   = 20;    // req/min por IP
-const LIMITE_DIA   = 500;   // req/dia global (todos os usuários)
+const LIMITE_DIA   = 200;   // req/dia global (todos os usuários)
 const WINDOW_MS    = 60000; // 1 minuto
 
 // Chave do dia no formato DDMMYYYY
@@ -31,7 +31,7 @@ function dayKey() {
 // ── Limite por minuto (por IP) ──
 async function checkIpLimit(ip) {
   const sanitized = ip.replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 80);
-  const ref  = db.collection("caos_limits").doc("ip_" + sanitized);
+  const ref  = db.collection("chat").doc("ip_" + sanitized);
   const snap = await ref.get();
   const now  = Date.now();
 
@@ -53,7 +53,7 @@ async function checkIpLimit(ip) {
 // ── Limite diário global (compartilhado entre todos) ──
 async function checkAndIncrementGlobal() {
   const dk  = dayKey();
-  const ref = db.collection("caos_limits").doc("global_day");
+  const ref = db.collection("chat").doc("limits");
   const snap = await ref.get();
 
   const current = snap.exists ? (snap.data()[dk] || 0) : 0;
@@ -85,7 +85,7 @@ export default async function handler(req, res) {
     // ── Atalho: info do modelo + contadores (não conta no limite) ──
     if (message === "__model_info__") {
       const dk   = dayKey();
-      const snap = await db.collection("caos_limits").doc("global_day").get();
+      const snap = await db.collection("chat").doc("limits").get();
       const used = snap.exists ? (snap.data()[dk] || 0) : 0;
       return res.status(200).json({
         reply:     "",
@@ -113,7 +113,7 @@ export default async function handler(req, res) {
     const globalOk = await checkAndIncrementGlobal();
     if (!globalOk) {
       return res.status(429).json({
-        reply: "⚠️ Limite diário global de 500 requisições atingido. Volta amanhã!",
+        reply: "⚠️ Limite diário global de 200 requisições atingido. Volta amanhã!",
         model: MODEL,
         limitType: "global_day"
       });
