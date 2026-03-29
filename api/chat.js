@@ -23,25 +23,25 @@ const CEREBRAS_KEY     = process.env.CEREBRAS_KEY;
 
 // HuggingFace
 const HF_MODELS = {
-  "meta-llama/Llama-3.1-8B-Instruct":          { label: "Llama 3.1 8B (padrão, barato)" },
-  "meta-llama/Llama-3.3-70B-Instruct":         { label: "Llama 3.3 70B" },
-  "Qwen/Qwen3-8B":                             { label: "Qwen3 8B" },
-  "Qwen/Qwen2.5-72B-Instruct":                 { label: "Qwen2.5 72B" },
-  "mistralai/Mistral-7B-Instruct-v0.3":        { label: "Mistral 7B" },
-  "mistralai/Mixtral-8x7B-Instruct-v0.1":      { label: "Mixtral 8×7B" },
-  "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B":   { label: "DeepSeek R1 7B" },
+  "meta-llama/Llama-3.1-8B-Instruct":         { label: "Llama 3.1 8B (padrão)" },
+  "meta-llama/Llama-3.3-70B-Instruct":        { label: "Llama 3.3 70B" },
+  "Qwen/Qwen3-8B":                            { label: "Qwen3 8B" },
+  "Qwen/Qwen2.5-72B-Instruct":                { label: "Qwen2.5 72B" },
+  "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B":  { label: "DeepSeek R1 7B" },
 };
 const HF_DEFAULT = "meta-llama/Llama-3.1-8B-Instruct";
 const HF_URL     = "https://router.huggingface.co/v1/chat/completions";
 const HF_KEY     = process.env.HF_KEY;
 
-// Mistral — removidos magistral, codestral, devstral
+// Mistral
 const MISTRAL_MODELS = {
-  "mistral-small-latest":  { label: "Mistral Small (padrão)" },
-  "mistral-large-latest":  { label: "Mistral Large" },
-  "mistral-medium-latest": { label: "Mistral Medium" },
-  "open-mistral-nemo":     { label: "Mistral NeMo (open)" },
-  "open-mixtral-8x22b":    { label: "Mixtral 8×22B (open)" },
+  "mistral-small-latest":    { label: "Mistral Small (padrão)" },
+  "mistral-large-latest":    { label: "Mistral Large" },
+  "mistral-medium-latest":   { label: "Mistral Medium" },
+  "codestral-latest":        { label: "Codestral (código)" },
+  "devstral-small-latest":   { label: "Devstral Small (agente)" },
+  "open-mistral-nemo":       { label: "Mistral NeMo (open)" },
+  "open-mixtral-8x22b":      { label: "Mixtral 8×22B (open)" },
 };
 const MISTRAL_DEFAULT    = "mistral-small-latest";
 const MISTRAL_URL        = "https://api.mistral.ai/v1/chat/completions";
