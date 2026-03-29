@@ -12,7 +12,7 @@ const db = admin.firestore();
 //  MODELOS
 // ══════════════════════════════════════════════
 const CEREBRAS_URL   = "https://api.cerebras.ai/v1/chat/completions";
-const CEREBRAS_MODEL = "gpt-oss-120b";
+const CEREBRAS_MODEL = "llama3.1-8b";
 const CEREBRAS_KEY   = process.env.CEREBRAS_KEY;
 
 const HF_URL   = "https://router.huggingface.co/v1/chat/completions";
