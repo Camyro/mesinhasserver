@@ -1,27 +1,7 @@
 import axios from "axios";
 
 const CHAT_API = "https://mesinhasserver.vercel.app/api/chat";
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  PROXY RSS — rss2json.com (gratuito, sem auth, 10k req/dia).
-//  Portais que bloqueiam requisições diretas de servidor usam esse proxy.
-//  Se o proxy falhar, tenta direto como fallback.
-// ══════════════════════════════════════════════════════════════════════════════
 const RSS2JSON = "https://api.rss2json.com/v1/api.json?rss_url=";
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  PORTAIS — feeds verificados (abril 2026)
-//
-//  proxy: false  → fetch direto (G1, Folha, R7, JP, Gazeta do Povo)
-//  proxy: true   → via rss2json.com (Estadão, UOL, Olhar Digital, Correio, TecMundo)
-//
-//  Feeds confirmados como ativos via feeder.co e GitHub awesome-rss-feeds:
-//   UOL     → http://rss.home.uol.com.br/index.xml (atualizado há 1h hoje)
-//   OD      → https://olhardigital.com.br/feed/     (atualizado há 28min hoje)
-//   Correio → https://www.correiobraziliense.com.br/feed (WordPress)
-//   Estadão → URL real com ?body={"layout":"google-news"} (confirmado feeder.co)
-//   TecMundo → https://rss.tecmundo.com.br/feed (pode estar instável)
-// ══════════════════════════════════════════════════════════════════════════════
 
 const PORTALS = [
   {
@@ -48,9 +28,15 @@ const PORTALS = [
     ],
   },
   {
-    id: "r7", name: "R7", color: "#cc0000", proxy: false,
+    // R7 — múltiplos feeds + proxy para maior robustez
+    id: "r7", name: "R7", color: "#cc0000", proxy: true,
     feeds: [
       "https://noticias.r7.com/feed.xml",
+      "https://noticias.r7.com/brasil/feed.xml",
+      "https://noticias.r7.com/brasil/feed",
+      "https://recordnews.r7.com/feed",
+      "https://noticias.r7.com/economia/feed.xml",
+      "https://noticias.r7.com/esportes/feed.xml",
     ],
   },
   {
@@ -70,7 +56,6 @@ const PORTALS = [
     ],
   },
   {
-    // URL real descoberta via feeder.co — usa body JSON encoded
     id: "estadao", name: "Estadão", color: "#003399", proxy: true,
     feeds: [
       "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/ultimas/?body=%7B%22layout%22%3A%22google-news%22%7D",
@@ -80,21 +65,20 @@ const PORTALS = [
     ],
   },
   {
-    // Confirmado ativo hoje via feeder.co
+    // UOL como portal independente
     id: "uol", name: "UOL", color: "#f08000", proxy: true,
     feeds: [
       "http://rss.home.uol.com.br/index.xml",
+      "https://rss.uol.com.br/feed/noticias.xml",
     ],
   },
   {
-    // Confirmado ativo hoje via feeder.co (atualizado há 28min)
     id: "olhardigital", name: "Olhar Digital", color: "#0091ea", proxy: true,
     feeds: [
       "https://olhardigital.com.br/feed/",
     ],
   },
   {
-    // WordPress /feed padrão, confirmado via feedspot
     id: "correiobraziliense", name: "Correio Braziliense", color: "#c62828", proxy: true,
     feeds: [
       "https://www.correiobraziliense.com.br/feed",
@@ -110,9 +94,7 @@ const PORTALS = [
   },
 ];
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  PARSE RSS XML nativo
-// ══════════════════════════════════════════════════════════════════════════════
+// ── PARSE RSS XML ─────────────────────────────────────────────────────────
 function parseRSS(xml) {
   const items = [];
   const itemRe = /<item>([\s\S]*?)<\/item>/gi;
@@ -134,9 +116,6 @@ function parseRSS(xml) {
   return items;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  PARSE resposta rss2json → formato comum
-// ══════════════════════════════════════════════════════════════════════════════
 function parseRss2Json(data) {
   if (!data || data.status !== "ok" || !Array.isArray(data.items)) return [];
   return data.items.map(item => ({
@@ -149,9 +128,7 @@ function parseRss2Json(data) {
   })).filter(i => i.title && i.link);
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  FETCH DIRETO
-// ══════════════════════════════════════════════════════════════════════════════
+// ── FETCH ────────────────────────────────────────────────────────────────
 async function fetchDirect(url) {
   try {
     const res = await axios.get(url, {
@@ -173,9 +150,6 @@ async function fetchDirect(url) {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  FETCH VIA PROXY rss2json (com fallback direto)
-// ══════════════════════════════════════════════════════════════════════════════
 async function fetchViaProxy(url) {
   try {
     const proxyUrl = `${RSS2JSON}${encodeURIComponent(url)}&count=30`;
@@ -197,9 +171,7 @@ async function fetchFeed(url, useProxy) {
   return useProxy ? fetchViaProxy(url) : fetchDirect(url);
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  DETECTA CATEGORIA
-// ══════════════════════════════════════════════════════════════════════════════
+// ── CATEGORIA ────────────────────────────────────────────────────────────
 function detectCategory(title, link) {
   const t = (title + " " + link).toLowerCase();
   if (/politi|congresso|senado|câmara|ministro|governo|presidente|eleicao|partido|lula|bolsonaro/.test(t)) return "Política";
@@ -242,9 +214,7 @@ function dedup(items) {
   });
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  BUSCA UM PORTAL
-// ══════════════════════════════════════════════════════════════════════════════
+// ── FETCH PORTAL ─────────────────────────────────────────────────────────
 async function fetchPortalNews(portal) {
   const feedResults = await Promise.all(
     portal.feeds.map(url => fetchFeed(url, portal.proxy ?? false))
@@ -281,9 +251,31 @@ async function fetchPortalNews(portal) {
   return news;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  AGRUPAMENTO SEMÂNTICO VIA IA
-// ══════════════════════════════════════════════════════════════════════════════
+// ── AGRUPAMENTO FALLBACK LEXICAL ──────────────────────────────────────────
+function groupFallback(allNews) {
+  const stop = new Set(["de","do","da","dos","das","no","na","nos","nas","em","com","que","por","para","os","as","um","uma","ao","à","é","e","o","a","se","já","após","mais","sobre","pelo","pela","entre","isso","este","essa","seus","suas"]);
+  const used = new Set(), result = [];
+  for (let i = 0; i < allNews.length; i++) {
+    if (used.has(i)) continue;
+    const group = { id: `g${i}`, items: [allNews[i]], categoria: allNews[i].categoria };
+    used.add(i);
+    const wA = allNews[i].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
+    for (let j = i + 1; j < allNews.length; j++) {
+      if (used.has(j) || allNews[j].portalId === allNews[i].portalId) continue;
+      const wB = allNews[j].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
+      const common = wA.filter(w => wB.includes(w));
+      const minLen = Math.min(wA.length, wB.length);
+      if (common.length >= 3 && minLen > 0 && (common.length / minLen) >= 0.3) {
+        group.items.push(allNews[j]);
+        used.add(j);
+      }
+    }
+    result.push(group);
+  }
+  return result.sort((a, b) => b.items.length - a.items.length);
+}
+
+// ── AGRUPAMENTO PRIMÁRIO IA ───────────────────────────────────────────────
 async function groupByTopicAI(allNews) {
   if (allNews.length === 0) return [];
 
@@ -291,10 +283,13 @@ async function groupByTopicAI(allNews) {
 
   const prompt = `Você é um editor-chefe de jornalismo. Agrupe APENAS notícias que cobrem EXATAMENTE o mesmo fato específico.
 
-CRITÉRIO: mesmo evento concreto + mesmo momento.
-✓ AGRUPAR: "Lula sanciona MP X" + "Presidente assina MP X"
-✗ NÃO AGRUPAR: temas amplos (futebol, política, economia)
-✗ NÃO AGRUPAR: fatos distintos mesmo que relacionados
+CRITÉRIO RIGOROSO:
+✓ AGRUPAR: "Lula sanciona MP X" + "Presidente assina MP X" (mesmo ato, mesmo momento)
+✓ AGRUPAR: "Bolsa cai 2% após decisão do Fed" + "Ibovespa recua com Fed" (mesmo evento)
+✗ NÃO AGRUPAR: temas amplos genéricos (futebol, política, economia como tema)
+✗ NÃO AGRUPAR: fatos distintos mesmo que do mesmo tema
+✗ NÃO AGRUPAR: notícias de datas/momentos diferentes
+✗ NÃO AGRUPAR: notícias que apenas mencionam o mesmo assunto de fundo mas cobrem eventos distintos
 
 NOTÍCIAS:
 ${lista}
@@ -337,32 +332,117 @@ Sem texto antes, depois, ou markdown.`;
   }
 }
 
-function groupFallback(allNews) {
-  const stop = new Set(["de","do","da","dos","das","no","na","nos","nas","em","com","que","por","para","os","as","um","uma","ao","à","é","e","o","a","se","já","após","mais","sobre","pelo","pela","entre","isso","este","essa","seus","suas"]);
-  const used = new Set(), result = [];
-  for (let i = 0; i < allNews.length; i++) {
-    if (used.has(i)) continue;
-    const group = { id: `g${i}`, items: [allNews[i]], categoria: allNews[i].categoria };
-    used.add(i);
-    const wA = allNews[i].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
-    for (let j = i + 1; j < allNews.length; j++) {
-      if (used.has(j) || allNews[j].portalId === allNews[i].portalId) continue;
-      const wB = allNews[j].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
-      const common = wA.filter(w => wB.includes(w));
-      const minLen = Math.min(wA.length, wB.length);
-      if (common.length >= 3 && minLen > 0 && (common.length / minLen) >= 0.3) {
-        group.items.push(allNews[j]);
-        used.add(j);
+// ── VALIDAÇÃO IA DOS GRUPOS (2ª PASSAGEM) ────────────────────────────────
+// Valida grupos com 2+ itens. Grupos inválidos são desmembrados.
+async function validateGroupsAI(groups) {
+  const multiGroups = groups.filter(g => g.items.length > 1);
+  if (multiGroups.length === 0) return groups;
+
+  const validationList = multiGroups.map((g, gi) => {
+    const titles = g.items.map((item) => `  - [${item.portalId.toUpperCase()}] ${item.titulo}`).join("\n");
+    return `GRUPO ${gi}:\n${titles}`;
+  }).join("\n\n");
+
+  const prompt = `Você é um editor-chefe rigoroso. Analise estes grupos de notícias e determine quais são VÁLIDOS.
+
+Um grupo é VÁLIDO apenas se TODAS as notícias cobrem EXATAMENTE O MESMO EVENTO ESPECÍFICO (mesmo fato, mesmo momento).
+Um grupo é INVÁLIDO se as notícias são sobre eventos diferentes, mesmo que relacionados ao mesmo tema geral.
+
+Exemplos VÁLIDOS:
+- "Câmara aprova projeto de lei X" + "Deputados votam PL X" ✓ (mesmo evento)
+- "Bolsa cai após anúncio do Fed" + "Ibovespa recua com decisão americana" ✓ (mesmo evento)
+
+Exemplos INVÁLIDOS:
+- "Lula fala sobre inflação" + "Mercado reage à política econômica" ✗ (eventos distintos)
+- "EUA anuncia tarifas" + "China ameaça retaliação" ✗ (ações diferentes)
+- "Flamengo vence campeonato" + "Corinthians perde jogo" ✗ (jogos distintos)
+
+GRUPOS PARA VALIDAR:
+${validationList}
+
+Responda SOMENTE JSON puro no formato:
+[{"grupo": 0, "valido": true}, {"grupo": 1, "valido": false}, ...]
+Sem texto antes, depois, ou markdown.`;
+
+  try {
+    const res = await axios.post(
+      CHAT_API,
+      { message: prompt },
+      { headers: { "Content-Type": "application/json" }, timeout: 25000 }
+    );
+
+    const raw = res.data?.reply || "";
+    const s   = raw.trim().replace(/```[\w]*\s*/gi, "").replace(/```/g, "").trim();
+    const st  = s.indexOf("["), en = s.lastIndexOf("]");
+    if (st === -1 || en === -1) throw new Error("sem JSON validação");
+    const validations = JSON.parse(s.slice(st, en + 1));
+
+    const invalidSet = new Set(
+      validations.filter(v => v.valido === false).map(v => Number(v.grupo))
+    );
+
+    const singleGroups = groups.filter(g => g.items.length === 1);
+    const rebuiltMulti = [];
+    let idCounter = 0;
+
+    multiGroups.forEach((g, gi) => {
+      if (invalidSet.has(gi)) {
+        // Desmembra grupo inválido em itens individuais
+        g.items.forEach(item => {
+          rebuiltMulti.push({
+            id: `gv${idCounter++}`,
+            items: [item],
+            categoria: item.categoria,
+          });
+        });
+        console.log(`Grupo ${gi} invalidado pela validação IA, desmembrado.`);
+      } else {
+        rebuiltMulti.push({ ...g, id: `gv${idCounter++}` });
       }
-    }
-    result.push(group);
+    });
+
+    const allRebuilt = [
+      ...rebuiltMulti,
+      ...singleGroups.map(g => ({ ...g, id: `gv${idCounter++}` })),
+    ];
+    return allRebuilt.sort((a, b) => b.items.length - a.items.length);
+
+  } catch (e) {
+    console.warn("validateGroupsAI falhou, mantendo grupos originais:", e.message);
+    return groups;
   }
-  return result.sort((a, b) => b.items.length - a.items.length);
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  HANDLER PRINCIPAL
-// ══════════════════════════════════════════════════════════════════════════════
+// ── RESUMO GERAL IA ───────────────────────────────────────────────────────
+async function generateOverallSummary(allNews) {
+  if (allNews.length === 0) return "";
+
+  const top = allNews.slice(0, 30);
+  const lista = top.map(n => `[${n.portal}] ${n.titulo}`).join("\n");
+
+  const prompt = `Você é um jornalista experiente. Com base nestas notícias dos principais portais brasileiros de hoje, faça um RESUMO EXECUTIVO do que está acontecendo no Brasil e no mundo agora.
+
+Escreva em 4-5 parágrafos curtos e objetivos, cobrindo os principais temas em pauta: política, economia, mundo, tecnologia, esportes (quando relevante). Use linguagem jornalística clara e direta. Destaque os acontecimentos mais importantes do momento.
+
+NOTÍCIAS DO MOMENTO:
+${lista}
+
+Escreva apenas o resumo. Não use títulos, não use marcações, não comece com frases como "Com base nas notícias..." ou "As principais notícias...". Comece diretamente com o conteúdo jornalístico.`;
+
+  try {
+    const res = await axios.post(
+      CHAT_API,
+      { message: prompt },
+      { headers: { "Content-Type": "application/json" }, timeout: 30000 }
+    );
+    return res.data?.reply || "";
+  } catch (e) {
+    console.warn("generateOverallSummary falhou:", e.message);
+    return "";
+  }
+}
+
+// ── HANDLER PRINCIPAL ─────────────────────────────────────────────────────
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -380,14 +460,22 @@ export default async function handler(req, res) {
     if (allNews.length === 0)
       return res.status(503).json({ error: "Feeds indisponíveis. Tente novamente." });
 
-    const groups = await groupByTopicAI(allNews);
+    // 1) Agrupamento primário por IA
+    let groups = await groupByTopicAI(allNews);
+
+    // 2) Validação dos grupos por IA (segunda passagem — corrige agrupamentos ruins)
+    groups = await validateGroupsAI(groups);
+
+    // 3) Resumo geral de todas as notícias
+    const overallSummary = await generateOverallSummary(allNews).catch(() => "");
 
     return res.status(200).json({
       groups,
       allNews,
-      portals:   PORTALS.map(p => ({ id: p.id, name: p.name, color: p.color })),
-      fetchedAt: new Date().toISOString(),
-      total:     allNews.length,
+      portals:        PORTALS.map(p => ({ id: p.id, name: p.name, color: p.color })),
+      fetchedAt:      new Date().toISOString(),
+      total:          allNews.length,
+      overallSummary,
     });
   } catch (err) {
     console.error("ERRO /api/news:", err?.message || err);
