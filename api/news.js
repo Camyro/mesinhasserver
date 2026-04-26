@@ -1,6 +1,6 @@
-import axios from "axios";
+import OpenAI from "openai";
 
-const CHAT_API = "https://mesinhasserver.vercel.app/api/chat";
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const PORTALS = [
   { id: "g1",      name: "G1",      color: "#e8001c", domain: "g1.globo.com"    },
@@ -25,75 +25,61 @@ function extractJsonArray(raw) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  CHAMA A API DE CHAT COM UM ENGINE ESPECÍFICO
-// ══════════════════════════════════════════════════════════════════════════════
-async function callChat(message, forceEngine, webSearch = false) {
-  const res = await axios.post(
-    CHAT_API,
-    { message, forceEngine, webSearch },
-    { headers: { "Content-Type": "application/json" }, timeout: 55000 }
-  );
-  return res.data?.reply || "";
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  BUSCA NOTÍCIAS DE UM PORTAL
-//  Tenta: 1) Mistral + web search  2) Cerebras com contexto de data
+//  BUSCA NOTÍCIAS DE UM PORTAL VIA OPENAI + WEB SEARCH
 // ══════════════════════════════════════════════════════════════════════════════
 async function fetchNewsFromPortal(portal) {
   const hoje = new Date().toLocaleDateString("pt-BR");
 
-  const prompt = `Hoje é ${hoje}. Busque as 6 notícias mais recentes e importantes publicadas hoje ou ontem no portal ${portal.name} (${portal.domain}).
+  const prompt = `Hoje é ${hoje}. Pesquise na web as 6 notícias mais recentes publicadas na última 1 hora (ou nas últimas 6 horas se não houver suficientes) no portal ${portal.name} (${portal.domain}).
 
-Responda SOMENTE com um array JSON válido, sem markdown, sem texto extra, sem explicações.
+Responda SOMENTE com um array JSON válido, sem markdown, sem texto extra.
 Cada item deve ter exatamente estes campos:
-- titulo: string (título da notícia)
-- resumo: string (2-3 frases resumindo a notícia)
+- titulo: string (título original da notícia)
+- resumo: string (2-3 frases resumindo o conteúdo)
 - categoria: string (Política, Economia, Esportes, Tecnologia, Brasil, Mundo ou Entretenimento)
-- link: string (URL completa da notícia em ${portal.domain})
+- link: string (URL completa e real da notícia em ${portal.domain})
 - hora: string (ex: "há 2 horas" ou "14h30")
 - portal: "${portal.name}"
 - portalId: "${portal.id}"
 
-Formato esperado:
-[{"titulo":"...","resumo":"...","categoria":"...","link":"https://${portal.domain}/...","hora":"...","portal":"${portal.name}","portalId":"${portal.id}"}]`;
+Retorne apenas o array JSON puro, sem nenhum texto antes ou depois.`;
 
-  // Tentativa 1: Mistral com web search
   try {
-    const reply = await callChat(prompt, "mistral", true);
-    const items = extractJsonArray(reply);
+    const response = await client.responses.create({
+      model: "gpt-4o-mini",
+      tools: [{ type: "web_search_preview" }],
+      input: prompt,
+    });
+
+    // Extrai o texto da resposta (output_text já é o conteúdo final)
+    const raw = response.output_text || "";
+
+    const items = extractJsonArray(raw);
     if (items && items.length > 0) {
-      console.log(`${portal.name}: ${items.length} notícias via Mistral`);
+      console.log(`${portal.name}: ${items.length} notícias encontradas`);
       return items
         .filter(i => i && i.titulo)
         .slice(0, 6)
-        .map(i => ({ ...i, portal: portal.name, portalId: portal.id, portalColor: portal.color, link: i.link || `https://${portal.domain}` }));
+        .map(i => ({
+          ...i,
+          portal:      portal.name,
+          portalId:    portal.id,
+          portalColor: portal.color,
+          link:        i.link || `https://${portal.domain}`,
+        }));
     }
-    console.warn(`${portal.name}: Mistral retornou JSON inválido, tentando Cerebras...`);
-  } catch (e) {
-    console.warn(`${portal.name}: Mistral falhou (${e.message}), tentando Cerebras...`);
-  }
 
-  // Tentativa 2: Cerebras (sem web search, usa conhecimento recente)
-  try {
-    const reply = await callChat(prompt, "cerebras", false);
-    const items = extractJsonArray(reply);
-    if (items && items.length > 0) {
-      console.log(`${portal.name}: ${items.length} notícias via Cerebras`);
-      return items
-        .filter(i => i && i.titulo)
-        .slice(0, 6)
-        .map(i => ({ ...i, portal: portal.name, portalId: portal.id, portalColor: portal.color, link: i.link || `https://${portal.domain}` }));
-    }
-  } catch (e) {
-    console.error(`${portal.name}: Cerebras também falhou (${e.message})`);
-  }
+    console.warn(`${portal.name}: resposta sem JSON válido`);
+    return [];
 
-  return [];
+  } catch (e) {
+    console.error(`${portal.name}: erro na busca —`, e?.message || e);
+    return [];
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  AGRUPAMENTO POR ASSUNTO
+//  AGRUPAMENTO POR ASSUNTO (igual ao original, sem alteração)
 // ══════════════════════════════════════════════════════════════════════════════
 function groupByTopic(allNews) {
   const groups   = [];
@@ -140,7 +126,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST")
-    return res.status(405).json({ error: "Método não permitido", model: "-" });
+    return res.status(405).json({ error: "Método não permitido" });
 
   try {
     // Busca os 4 portais em paralelo
@@ -150,7 +136,9 @@ export default async function handler(req, res) {
     console.log(`Total de notícias coletadas: ${allNews.length}`);
 
     if (allNews.length === 0)
-      return res.status(503).json({ error: "Nenhuma notícia encontrada. O limite do Mistral pode ter sido atingido. Tente novamente em alguns minutos." });
+      return res.status(503).json({
+        error: "Nenhuma notícia encontrada. Verifique a chave OPENAI_API_KEY ou tente novamente.",
+      });
 
     const groups = groupByTopic(allNews);
 
@@ -163,7 +151,7 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    console.error("ERRO /api/news:", err?.response?.data || err.message || err);
+    console.error("ERRO /api/news:", err?.message || err);
     return res.status(500).json({ error: "Erro interno ao buscar notícias." });
   }
 }
