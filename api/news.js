@@ -28,18 +28,6 @@ const PORTALS = [
     ],
   },
   {
-    // R7 — múltiplos feeds + proxy para maior robustez
-    id: "r7", name: "R7", color: "#cc0000", proxy: true,
-    feeds: [
-      "https://noticias.r7.com/feed.xml",
-      "https://noticias.r7.com/brasil/feed.xml",
-      "https://noticias.r7.com/brasil/feed",
-      "https://recordnews.r7.com/feed",
-      "https://noticias.r7.com/economia/feed.xml",
-      "https://noticias.r7.com/esportes/feed.xml",
-    ],
-  },
-  {
     id: "jovempan", name: "Jovem Pan", color: "#ff6600", proxy: false,
     feeds: [
       "https://jovempan.com.br/feed",
@@ -65,7 +53,6 @@ const PORTALS = [
     ],
   },
   {
-    // UOL como portal independente
     id: "uol", name: "UOL", color: "#f08000", proxy: true,
     feeds: [
       "http://rss.home.uol.com.br/index.xml",
@@ -76,14 +63,6 @@ const PORTALS = [
     id: "olhardigital", name: "Olhar Digital", color: "#0091ea", proxy: true,
     feeds: [
       "https://olhardigital.com.br/feed/",
-    ],
-  },
-  {
-    id: "correiobraziliense", name: "Correio Braziliense", color: "#c62828", proxy: true,
-    feeds: [
-      "https://www.correiobraziliense.com.br/feed",
-      "https://www.correiobraziliense.com.br/brasil/feed",
-      "https://www.correiobraziliense.com.br/economia/feed",
     ],
   },
   {
@@ -155,14 +134,9 @@ async function fetchViaProxy(url) {
     const proxyUrl = `${RSS2JSON}${encodeURIComponent(url)}&count=30`;
     const res = await axios.get(proxyUrl, { timeout: 15000 });
     const items = parseRss2Json(res.data);
-    if (items.length > 0) {
-      console.log(`  proxy OK (${url}): ${items.length} itens`);
-      return items;
-    }
-    console.log(`  proxy sem itens (${url}), tentando direto...`);
+    if (items.length > 0) return items;
     return fetchDirect(url);
   } catch (e) {
-    console.warn(`Proxy falhou (${url}): ${e.message}, tentando direto...`);
     return fetchDirect(url);
   }
 }
@@ -251,7 +225,7 @@ async function fetchPortalNews(portal) {
   return news;
 }
 
-// ── AGRUPAMENTO FALLBACK LEXICAL ──────────────────────────────────────────
+// ── AGRUPAMENTO FALLBACK LEXICAL (mais restrito) ──────────────────────────
 function groupFallback(allNews) {
   const stop = new Set(["de","do","da","dos","das","no","na","nos","nas","em","com","que","por","para","os","as","um","uma","ao","à","é","e","o","a","se","já","após","mais","sobre","pelo","pela","entre","isso","este","essa","seus","suas"]);
   const used = new Set(), result = [];
@@ -265,7 +239,8 @@ function groupFallback(allNews) {
       const wB = allNews[j].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
       const common = wA.filter(w => wB.includes(w));
       const minLen = Math.min(wA.length, wB.length);
-      if (common.length >= 3 && minLen > 0 && (common.length / minLen) >= 0.3) {
+      // Critério mais restrito: 50% de sobreposição E mínimo 4 palavras em comum
+      if (common.length >= 4 && minLen > 0 && (common.length / minLen) >= 0.5) {
         group.items.push(allNews[j]);
         used.add(j);
       }
@@ -275,29 +250,56 @@ function groupFallback(allNews) {
   return result.sort((a, b) => b.items.length - a.items.length);
 }
 
-// ── AGRUPAMENTO PRIMÁRIO IA ───────────────────────────────────────────────
+// ── AGRUPAMENTO PRIMÁRIO IA (prompt muito mais restrito) ──────────────────
 async function groupByTopicAI(allNews) {
   if (allNews.length === 0) return [];
 
   const lista = allNews.map((n, i) => `${i}: [${n.portalId.toUpperCase()}] ${n.titulo}`).join("\n");
 
-  const prompt = `Você é um editor-chefe de jornalismo. Agrupe APENAS notícias que cobrem EXATAMENTE o mesmo fato específico.
+  const prompt = `Você é um editor-chefe de jornalismo extremamente criterioso. Sua tarefa é agrupar notícias que cobrem LITERALMENTE O MESMO FATO ESPECÍFICO E ÚNICO.
 
-CRITÉRIO RIGOROSO:
-✓ AGRUPAR: "Lula sanciona MP X" + "Presidente assina MP X" (mesmo ato, mesmo momento)
-✓ AGRUPAR: "Bolsa cai 2% após decisão do Fed" + "Ibovespa recua com Fed" (mesmo evento)
-✗ NÃO AGRUPAR: temas amplos genéricos (futebol, política, economia como tema)
-✗ NÃO AGRUPAR: fatos distintos mesmo que do mesmo tema
-✗ NÃO AGRUPAR: notícias de datas/momentos diferentes
-✗ NÃO AGRUPAR: notícias que apenas mencionam o mesmo assunto de fundo mas cobrem eventos distintos
+══════════════════════════════════════════
+CRITÉRIO ABSOLUTO PARA AGRUPAR:
+As notícias devem se referir ao MESMO ACONTECIMENTO, ocorrido no MESMO MOMENTO, com os MESMOS PROTAGONISTAS PRINCIPAIS.
 
-NOTÍCIAS:
+TESTE MENTAL: Antes de agrupar A com B, pergunte-se: "Um leitor que lesse A e depois B diria que ambas estão falando do MESMO fato?" Se houver qualquer dúvida, NÃO AGRUPE.
+══════════════════════════════════════════
+
+✅ EXEMPLOS DE AGRUPAMENTO CORRETO:
+- "Câmara aprova PL das drogas em segundo turno" + "Deputados votam PL que criminaliza porte de drogas"
+  → Mesmo ato legislativo, mesmo dia, mesma câmara
+- "Bolsa cai 2,3% após decisão do Fed sobre juros" + "Ibovespa recua com sinal hawkish do Fed"
+  → Mesmo evento de mercado, mesmo dia, mesma causa
+- "Lula sanciona novo marco do saneamento básico" + "Presidente assina lei do saneamento com vetos"
+  → Mesmo ato presidencial, mesmo documento
+
+❌ EXEMPLOS DE AGRUPAMENTO ERRADO (NÃO FAÇA ISSO):
+- "Governo debate reforma tributária" + "Mercado acompanha votação da reforma"
+  → Não. São perspectivas diferentes de eventos distintos do mesmo tema
+- "Flamengo vence o Botafogo" + "Corinthians empata com o Palmeiras"
+  → Não. São jogos completamente diferentes
+- "Trump anuncia tarifas sobre aço" + "China ameaça retaliar os EUA"
+  → Não. São dois acontecimentos distintos (anúncio ≠ reação)
+- "Inflação sobe em março" + "Banco Central analisa cenário de juros"
+  → Não. Eventos distintos, mesmo que relacionados ao mesmo tema econômico
+- "Chuvas causam enchentes no RS" + "Defesa Civil alerta para riscos no Sul"
+  → Não. A menos que seja explicitamente o mesmo evento no mesmo momento
+
+══════════════════════════════════════════
+REGRAS ADICIONAIS:
+- Se tiver dúvida, NÃO agrupe. É melhor deixar separado do que agrupar incorretamente.
+- Não agrupe por tema geral (política, economia, esportes). Apenas por FATO IDÊNTICO.
+- Notícias do mesmo portal NUNCA devem estar no mesmo grupo.
+- Notícias de períodos diferentes (hoje vs ontem) NÃO devem ser agrupadas.
+══════════════════════════════════════════
+
+NOTÍCIAS PARA ANALISAR:
 ${lista}
 
 Responda SOMENTE JSON puro — array de arrays de índices inteiros.
-Cada índice aparece exatamente uma vez. Sozinhos: [N]
-Formato: [[0,3],[1],[2,5],[4],...]
-Sem texto antes, depois, ou markdown.`;
+Cada índice aparece exatamente uma vez. Notícias sem par ficam sozinhas: [N]
+Formato exato: [[0,3],[1],[2,5],[4],...]
+Absolutamente nenhum texto antes, depois, ou blocos markdown.`;
 
   try {
     const res = await axios.post(
@@ -332,37 +334,41 @@ Sem texto antes, depois, ou markdown.`;
   }
 }
 
-// ── VALIDAÇÃO IA DOS GRUPOS (2ª PASSAGEM) ────────────────────────────────
-// Valida grupos com 2+ itens. Grupos inválidos são desmembrados.
+// ── VALIDAÇÃO RIGOROSA IA DOS GRUPOS (2ª PASSAGEM) ───────────────────────
 async function validateGroupsAI(groups) {
   const multiGroups = groups.filter(g => g.items.length > 1);
   if (multiGroups.length === 0) return groups;
 
   const validationList = multiGroups.map((g, gi) => {
-    const titles = g.items.map((item) => `  - [${item.portalId.toUpperCase()}] ${item.titulo}`).join("\n");
+    const titles = g.items.map((item) => `  [${item.portalId.toUpperCase()}] ${item.titulo}`).join("\n");
     return `GRUPO ${gi}:\n${titles}`;
   }).join("\n\n");
 
-  const prompt = `Você é um editor-chefe rigoroso. Analise estes grupos de notícias e determine quais são VÁLIDOS.
+  const prompt = `Você é um editor-chefe de jornal extremamente exigente e cético. Revise estes grupos de notícias e determine se cada um é VÁLIDO ou INVÁLIDO.
 
-Um grupo é VÁLIDO apenas se TODAS as notícias cobrem EXATAMENTE O MESMO EVENTO ESPECÍFICO (mesmo fato, mesmo momento).
-Um grupo é INVÁLIDO se as notícias são sobre eventos diferentes, mesmo que relacionados ao mesmo tema geral.
+DEFINIÇÃO ESTRITA DE GRUPO VÁLIDO:
+Um grupo é VÁLIDO somente se TODAS as notícias cobrem LITERALMENTE O MESMO ACONTECIMENTO ESPECÍFICO — mesmo fato, mesmo momento, mesmos protagonistas principais.
 
-Exemplos VÁLIDOS:
-- "Câmara aprova projeto de lei X" + "Deputados votam PL X" ✓ (mesmo evento)
-- "Bolsa cai após anúncio do Fed" + "Ibovespa recua com decisão americana" ✓ (mesmo evento)
+DEFINIÇÃO DE GRUPO INVÁLIDO (invalide sem piedade):
+- Notícias sobre TEMAS relacionados mas FATOS DIFERENTES
+- Uma notícia é causa e a outra é consequência (são dois fatos distintos)
+- Notícias com mesmo assunto geral mas enquadramentos/eventos claramente distintos
+- Notícias em que um leitor diria "essas duas coisas são diferentes"
 
-Exemplos INVÁLIDOS:
-- "Lula fala sobre inflação" + "Mercado reage à política econômica" ✗ (eventos distintos)
-- "EUA anuncia tarifas" + "China ameaça retaliação" ✗ (ações diferentes)
-- "Flamengo vence campeonato" + "Corinthians perde jogo" ✗ (jogos distintos)
+EXEMPLOS VÁLIDOS:
+✅ "STF suspende votação do pacote fiscal" + "Ministros do STF travam proposta de Lula" → mesmo julgamento
+✅ "Dólar bate R$6,20 após IPCA acima do esperado" + "Câmbio dispara com inflação surpreendente" → mesmo movimento, mesmo dia
 
-GRUPOS PARA VALIDAR:
+EXEMPLOS INVÁLIDOS:
+❌ "Governo anuncia corte de gastos" + "Bolsa reage negativamente ao pacote fiscal" → duas notícias distintas
+❌ "EUA impõe tarifas à China" + "China promete retaliar comércio americano" → anúncio ≠ reação
+
+GRUPOS PARA REVISÃO:
 ${validationList}
 
-Responda SOMENTE JSON puro no formato:
-[{"grupo": 0, "valido": true}, {"grupo": 1, "valido": false}, ...]
-Sem texto antes, depois, ou markdown.`;
+Responda SOMENTE JSON puro:
+[{"grupo": 0, "valido": true, "motivo": "..."}, {"grupo": 1, "valido": false, "motivo": "..."}]
+Sem texto antes, depois, ou markdown. Seja severo — na dúvida, invalide.`;
 
   try {
     const res = await axios.post(
@@ -381,13 +387,14 @@ Sem texto antes, depois, ou markdown.`;
       validations.filter(v => v.valido === false).map(v => Number(v.grupo))
     );
 
+    console.log(`Validação: ${invalidSet.size} de ${multiGroups.length} grupos multi invalidados.`);
+
     const singleGroups = groups.filter(g => g.items.length === 1);
     const rebuiltMulti = [];
     let idCounter = 0;
 
     multiGroups.forEach((g, gi) => {
       if (invalidSet.has(gi)) {
-        // Desmembra grupo inválido em itens individuais
         g.items.forEach(item => {
           rebuiltMulti.push({
             id: `gv${idCounter++}`,
@@ -395,7 +402,7 @@ Sem texto antes, depois, ou markdown.`;
             categoria: item.categoria,
           });
         });
-        console.log(`Grupo ${gi} invalidado pela validação IA, desmembrado.`);
+        console.log(`Grupo ${gi} invalidado: desmembrado em ${g.items.length} itens individuais.`);
       } else {
         rebuiltMulti.push({ ...g, id: `gv${idCounter++}` });
       }
@@ -417,17 +424,27 @@ Sem texto antes, depois, ou markdown.`;
 async function generateOverallSummary(allNews) {
   if (allNews.length === 0) return "";
 
-  const top = allNews.slice(0, 30);
+  const top  = allNews.slice(0, 30);
   const lista = top.map(n => `[${n.portal}] ${n.titulo}`).join("\n");
 
-  const prompt = `Você é um jornalista experiente. Com base nestas notícias dos principais portais brasileiros de hoje, faça um RESUMO EXECUTIVO do que está acontecendo no Brasil e no mundo agora.
+  const prompt = `Você é um jornalista sênior brasileiro experiente e cético. Sua tarefa é redigir um RESUMO EXECUTIVO jornalístico do que está acontecendo agora no Brasil e no mundo, com base nas manchetes dos principais portais de notícias.
 
-Escreva em 4-5 parágrafos curtos e objetivos, cobrindo os principais temas em pauta: política, economia, mundo, tecnologia, esportes (quando relevante). Use linguagem jornalística clara e direta. Destaque os acontecimentos mais importantes do momento.
+INSTRUÇÕES CRÍTICAS PARA EVITAR ALUCINAÇÕES:
+- Baseie-se EXCLUSIVAMENTE nas manchetes fornecidas. Não invente detalhes, números, nomes ou contextos que não estejam explicitamente nas manchetes.
+- Se uma manchete for ambígua, descreva-a como está, sem especular.
+- Não afirme fatos que não consiga deduzir diretamente das manchetes.
+- Use linguagem como "segundo portais", "conforme divulgado", "de acordo com a mídia" quando houver apenas uma fonte.
+- Prefira descrever o que está sendo noticiado, não o que "aconteceu" como fato absoluto.
 
-NOTÍCIAS DO MOMENTO:
-${lista}
+FORMATO:
+- 4 a 5 parágrafos curtos e diretos
+- Linguagem jornalística, clara e objetiva
+- Cubra os principais temas presentes: política, economia, mundo, tecnologia, esportes (somente se houver)
+- Comece diretamente com o conteúdo. Não use frases introdutórias como "Com base nas notícias..." ou "As manchetes de hoje..."
+- Sem títulos, sem marcadores, sem listas
 
-Escreva apenas o resumo. Não use títulos, não use marcações, não comece com frases como "Com base nas notícias..." ou "As principais notícias...". Comece diretamente com o conteúdo jornalístico.`;
+MANCHETES DO MOMENTO:
+${lista}`;
 
   try {
     const res = await axios.post(
@@ -460,10 +477,10 @@ export default async function handler(req, res) {
     if (allNews.length === 0)
       return res.status(503).json({ error: "Feeds indisponíveis. Tente novamente." });
 
-    // 1) Agrupamento primário por IA
+    // 1) Agrupamento primário por IA (prompt muito mais restrito)
     let groups = await groupByTopicAI(allNews);
 
-    // 2) Validação dos grupos por IA (segunda passagem — corrige agrupamentos ruins)
+    // 2) Validação rigorosa por IA (segunda passagem)
     groups = await validateGroupsAI(groups);
 
     // 3) Resumo geral de todas as notícias
