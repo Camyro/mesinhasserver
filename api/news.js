@@ -2,6 +2,12 @@ import axios from "axios";
 
 const CHAT_API = "https://mesinhasserver.vercel.app/api/chat";
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  PORTAIS — feeds verificados e ativos
+//  G1, Estadão, R7 e Folha têm RSS públicos e estáveis.
+//  SBT antigo (sbt.com.br/jornalismo/rss) estava morto — trocado por R7.
+//  Band bloqueava requests de servidor — trocado por Folha (emcimadahora).
+// ══════════════════════════════════════════════════════════════════════════════
 const PORTALS = [
   {
     id:    "g1",
@@ -18,18 +24,9 @@ const PORTALS = [
     ],
   },
   {
-    id:    "sbt",
-    name:  "SBT",
-    color: "#00529c",
-    domain: "sbt.com.br",
-    feeds: [
-      "https://www.sbt.com.br/jornalismo/rss",
-    ],
-  },
-  {
     id:    "estadao",
     name:  "Estadão",
-    color: "#1a1a1a",
+    color: "#003399",
     domain: "estadao.com.br",
     feeds: [
       "https://estadao.com.br/arc/outboundfeeds/rss/",
@@ -40,63 +37,66 @@ const PORTALS = [
     ],
   },
   {
-    id:    "band",
-    name:  "Band",
-    color: "#f5a623",
-    domain: "band.uol.com.br",
+    id:    "r7",
+    name:  "R7",
+    color: "#cc0000",
+    domain: "r7.com",
     feeds: [
-      "https://www.band.uol.com.br/noticias/rss",
+      "https://noticias.r7.com/feed.xml",
+    ],
+  },
+  {
+    id:    "folha",
+    name:  "Folha",
+    color: "#0066cc",
+    domain: "folha.uol.com.br",
+    feeds: [
+      "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml",
+      "https://feeds.folha.uol.com.br/poder/rss091.xml",
+      "https://feeds.folha.uol.com.br/mercado/rss091.xml",
+      "https://feeds.folha.uol.com.br/esporte/rss091.xml",
+      "https://feeds.folha.uol.com.br/mundo/rss091.xml",
     ],
   },
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PARSE RSS — extrai itens do XML sem dependência externa
+//  PARSE RSS — sem dependência externa
 // ══════════════════════════════════════════════════════════════════════════════
 function parseRSS(xml) {
   const items = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
-  let match;
-
-  while ((match = itemRegex.exec(xml)) !== null) {
-    const block = match[1];
-
+  const itemRe = /<item>([\s\S]*?)<\/item>/gi;
+  let m;
+  while ((m = itemRe.exec(xml)) !== null) {
+    const b = m[1];
     const get = (tag) => {
-      // Tenta com CDATA primeiro, depois texto simples
-      const cdataRe = new RegExp(`<${tag}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${tag}>`, "i");
-      const plainRe = new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, "i");
-      const c = cdataRe.exec(block);
-      if (c) return c[1].trim();
-      const p = plainRe.exec(block);
-      return p ? p[1].trim() : "";
+      const cd = new RegExp(`<${tag}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${tag}>`, "i").exec(b);
+      if (cd) return cd[1].trim();
+      const pl = new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, "i").exec(b);
+      return pl ? pl[1].trim() : "";
     };
-
     const title   = get("title");
     const link    = get("link") || get("guid");
-    const pubDate = get("pubDate");
+    const pubDate = get("pubDate") || get("dc:date") || get("pubdate");
     const desc    = get("description");
-
-    if (!title || !link) continue;
-
-    items.push({ title, link, pubDate, desc });
+    if (title && link) items.push({ title, link, pubDate, desc });
   }
-
   return items;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  FETCH DE UM FEED RSS
+//  FETCH DE UM FEED
 // ══════════════════════════════════════════════════════════════════════════════
 async function fetchFeed(url) {
   try {
     const res = await axios.get(url, {
-      timeout: 10000,
+      timeout: 12000,
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; NewsAggregator/1.0)",
-        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Accept":     "application/rss+xml, application/xml, text/xml, */*",
       },
     });
-    return parseRSS(res.data || "");
+    return parseRSS(typeof res.data === "string" ? res.data : String(res.data));
   } catch (e) {
     console.warn(`Feed falhou (${url}): ${e.message}`);
     return [];
@@ -104,31 +104,28 @@ async function fetchFeed(url) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  DETECTA CATEGORIA PELO LINK / TÍTULO
+//  CATEGORIA POR LINK / TÍTULO
 // ══════════════════════════════════════════════════════════════════════════════
 function detectCategory(title, link) {
   const t = (title + " " + link).toLowerCase();
-  if (/politi|congresso|senado|câmara|ministro|governo|presidente|eleicao|partido/.test(t)) return "Política";
-  if (/economi|mercado|bolsa|dolar|inflacao|pib|juros|banco|empresa|negocio/.test(t))        return "Economia";
-  if (/futebol|esporte|campeonato|copa|olimpi|atleta|jogo|placar|gol|nba|nfl/.test(t))       return "Esportes";
-  if (/tecnolog|inteligencia|ia|startup|celular|iphone|android|internet|app/.test(t))        return "Tecnologia";
-  if (/mundo|internacional|guerra|eua|china|russia|europa|oriente|africa/.test(t))           return "Mundo";
-  if (/entreteni|cinema|musica|serie|celebr|famoso|show|festival|arte/.test(t))              return "Entretenimento";
+  if (/politi|congresso|senado|câmara|ministro|governo|presidente|eleicao|partido|lula|bolsonaro/.test(t)) return "Política";
+  if (/economi|mercado|bolsa|dolar|inflacao|pib|juros|banco|empresa|negocio|petrobras|receita/.test(t))    return "Economia";
+  if (/futebol|esporte|campeonato|copa|olimpi|atleta|gol|nba|nfl|tênis|basquete|vôlei/.test(t))            return "Esportes";
+  if (/tecnolog|inteligencia artificial|startup|celular|iphone|android|internet|app|ia |openai/.test(t))   return "Tecnologia";
+  if (/mundo|internacional|guerra|eua|trump|china|russia|europa|oriente|africa|argentina/.test(t))         return "Mundo";
+  if (/entreteni|cinema|musica|serie|celebr|famoso|show|festival|arte|novela|bbb/.test(t))                 return "Entretenimento";
   return "Brasil";
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  FILTRA NOTÍCIAS DAS ÚLTIMAS N HORAS
+//  FILTRO DE TEMPO
 // ══════════════════════════════════════════════════════════════════════════════
 function withinHours(pubDate, hours) {
-  if (!pubDate) return true; // sem data = inclui por segurança
+  if (!pubDate) return true;
   try {
     const d = new Date(pubDate);
-    if (isNaN(d.getTime())) return true;
-    return (Date.now() - d.getTime()) <= hours * 3_600_000;
-  } catch {
-    return true;
-  }
+    return !isNaN(d) && (Date.now() - d.getTime()) <= hours * 3_600_000;
+  } catch { return true; }
 }
 
 function formatAge(pubDate) {
@@ -138,10 +135,8 @@ function formatAge(pubDate) {
     if (diff < 1)  return "agora mesmo";
     if (diff < 60) return `há ${diff} min`;
     const h = Math.floor(diff / 60);
-    return `há ${h}h`;
-  } catch {
-    return "";
-  }
+    return h === 1 ? "há 1h" : `há ${h}h`;
+  } catch { return ""; }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -158,38 +153,39 @@ function dedup(items) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BUSCA TODOS OS FEEDS DE UM PORTAL E FILTRA ÚLTIMA 1H (fallback 3h)
+//  BUSCA UM PORTAL — todos os feeds em paralelo, filtra 1h (fallback 3h)
 // ══════════════════════════════════════════════════════════════════════════════
 async function fetchPortalNews(portal) {
   const feedResults = await Promise.all(portal.feeds.map(fetchFeed));
-  const allItems = feedResults.flat();
+  const all = feedResults.flat();
 
-  // Tenta 1h primeiro; se vier vazio, aceita 3h
-  let filtered = allItems.filter(i => withinHours(i.pubDate, 1));
-  if (filtered.length < 3) filtered = allItems.filter(i => withinHours(i.pubDate, 3));
+  let filtered = all.filter(i => withinHours(i.pubDate, 1));
+  if (filtered.length < 3) {
+    filtered = all.filter(i => withinHours(i.pubDate, 3));
+    console.log(`${portal.name}: poucos itens em 1h, expandindo para 3h`);
+  }
 
   const news = filtered.map(item => ({
-    titulo:     item.title,
-    resumo:     item.desc
-                  ? item.desc.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 300)
-                  : item.title,
-    categoria:  detectCategory(item.title, item.link),
-    link:       item.link,
-    hora:       formatAge(item.pubDate),
-    pubDate:    item.pubDate,
-    portal:     portal.name,
-    portalId:   portal.id,
+    titulo:      item.title,
+    resumo:      item.desc
+                   ? item.desc.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 300)
+                   : item.title,
+    categoria:   detectCategory(item.title, item.link),
+    link:        item.link,
+    hora:        formatAge(item.pubDate),
+    pubDate:     item.pubDate,
+    portal:      portal.name,
+    portalId:    portal.id,
     portalColor: portal.color,
   }));
 
-  // Ordena mais recentes primeiro
   news.sort((a, b) => {
     const da = a.pubDate ? new Date(a.pubDate).getTime() : 0;
     const db = b.pubDate ? new Date(b.pubDate).getTime() : 0;
     return db - da;
   });
 
-  console.log(`${portal.name}: ${news.length} notícias (de ${allItems.length} no feed)`);
+  console.log(`${portal.name}: ${news.length} notícias (${all.length} brutas no feed)`);
   return news;
 }
 
@@ -199,15 +195,13 @@ async function fetchPortalNews(portal) {
 async function groupByTopicAI(allNews) {
   if (allNews.length === 0) return [];
 
-  const lista = allNews
-    .map((n, i) => `${i}: [${n.portalId.toUpperCase()}] ${n.titulo}`)
-    .join("\n");
+  const lista = allNews.map((n, i) => `${i}: [${n.portalId.toUpperCase()}] ${n.titulo}`).join("\n");
 
-  const prompt = `Você é um editor de jornalismo. Liste de títulos de notícias brasileiras recentes de diferentes portais:
+  const prompt = `Você é um editor de jornalismo. Lista de notícias recentes de portais brasileiros:
 
 ${lista}
 
-Agrupe os índices que cobrem EXATAMENTE O MESMO FATO específico. Não agrupe por tema geral — só pelo mesmo acontecimento concreto (mesmo acidente, mesmo jogo, mesmo pronunciamento, mesma lei).
+Agrupe APENAS os índices que cobrem exatamente o MESMO FATO específico (mesmo acidente, jogo, pronunciamento, lei). Não agrupe por tema amplo — "futebol" não é grupo, precisa ser o mesmo jogo.
 
 Responda SOMENTE com JSON puro — array de arrays de índices:
 [[0,3],[1],[2,5,8],[4],...]
@@ -221,29 +215,23 @@ Cada índice aparece exatamente uma vez. Sem texto antes ou depois.`;
       { headers: { "Content-Type": "application/json" }, timeout: 25000 }
     );
 
-    const raw    = res.data?.reply || "";
-    const groups = (() => {
-      // extractJsonArray inline
-      let s = raw.trim().replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      const st = s.indexOf("["), en = s.lastIndexOf("]");
-      if (st === -1 || en === -1) return null;
-      try { return JSON.parse(s.slice(st, en + 1)); } catch { return null; }
-    })();
-
-    if (!groups || !Array.isArray(groups)) throw new Error("JSON inválido");
+    const raw = res.data?.reply || "";
+    let s = raw.trim().replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    const st = s.indexOf("["), en = s.lastIndexOf("]");
+    if (st === -1 || en === -1) throw new Error("sem JSON");
+    const groups = JSON.parse(s.slice(st, en + 1));
 
     const used   = new Set();
     const result = [];
 
-    for (const group of groups) {
-      if (!Array.isArray(group)) continue;
-      const valid = group.filter(i => Number.isInteger(i) && i >= 0 && i < allNews.length && !used.has(i));
+    for (const g of groups) {
+      if (!Array.isArray(g)) continue;
+      const valid = g.filter(i => Number.isInteger(i) && i >= 0 && i < allNews.length && !used.has(i));
       if (!valid.length) continue;
       valid.forEach(i => used.add(i));
       result.push({ id: `g${result.length}`, items: valid.map(i => allNews[i]), categoria: allNews[valid[0]].categoria });
     }
 
-    // Itens que o modelo não colocou em nenhum grupo
     for (let i = 0; i < allNews.length; i++) {
       if (!used.has(i))
         result.push({ id: `g${result.length}`, items: [allNews[i]], categoria: allNews[i].categoria });
@@ -258,7 +246,7 @@ Cada índice aparece exatamente uma vez. Sem texto antes ou depois.`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  FALLBACK: agrupamento por palavras-chave (sem IA)
+//  FALLBACK: agrupamento por palavras (sem IA)
 // ══════════════════════════════════════════════════════════════════════════════
 function groupFallback(allNews) {
   const stop = new Set([
@@ -268,13 +256,11 @@ function groupFallback(allNews) {
   ]);
   const used   = new Set();
   const result = [];
-
   for (let i = 0; i < allNews.length; i++) {
     if (used.has(i)) continue;
     const group = { id: `g${i}`, items: [allNews[i]], categoria: allNews[i].categoria };
     used.add(i);
     const wA = allNews[i].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
-
     for (let j = i + 1; j < allNews.length; j++) {
       if (used.has(j) || allNews[j].portalId === allNews[i].portalId) continue;
       const wB = allNews[j].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
@@ -285,7 +271,6 @@ function groupFallback(allNews) {
     }
     result.push(group);
   }
-
   return result.sort((a, b) => b.items.length - a.items.length);
 }
 
@@ -301,16 +286,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Método não permitido" });
 
   try {
-    // 1. Todos os portais em paralelo via RSS
     const results = await Promise.all(PORTALS.map(fetchPortalNews));
     const allNews = dedup(results.flat());
 
-    console.log(`Total: ${allNews.length} notícias após dedup`);
+    console.log(`Total após dedup: ${allNews.length} notícias`);
 
     if (allNews.length === 0)
-      return res.status(503).json({ error: "Feeds RSS indisponíveis no momento. Tente novamente." });
+      return res.status(503).json({ error: "Feeds indisponíveis no momento. Tente novamente." });
 
-    // 2. Agrupamento semântico via Cerebras
     const groups = await groupByTopicAI(allNews);
 
     return res.status(200).json({
