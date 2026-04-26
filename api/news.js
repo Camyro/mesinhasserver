@@ -3,10 +3,7 @@ import axios from "axios";
 const CHAT_API = "https://mesinhasserver.vercel.app/api/chat";
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PORTAIS — feeds verificados e ativos
-//  G1, Estadão, R7 e Folha têm RSS públicos e estáveis.
-//  SBT antigo (sbt.com.br/jornalismo/rss) estava morto — trocado por R7.
-//  Band bloqueava requests de servidor — trocado por Folha (emcimadahora).
+//  PORTAIS — feeds verificados e ativos (atualizado 2026)
 // ══════════════════════════════════════════════════════════════════════════════
 const PORTALS = [
   {
@@ -24,28 +21,6 @@ const PORTALS = [
     ],
   },
   {
-    id:    "estadao",
-    name:  "Estadão",
-    color: "#003399",
-    domain: "estadao.com.br",
-    feeds: [
-      "https://estadao.com.br/arc/outboundfeeds/rss/",
-      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=politica",
-      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=economia",
-      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=esportes",
-      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=internacional",
-    ],
-  },
-  {
-    id:    "r7",
-    name:  "R7",
-    color: "#cc0000",
-    domain: "r7.com",
-    feeds: [
-      "https://noticias.r7.com/feed.xml",
-    ],
-  },
-  {
     id:    "folha",
     name:  "Folha",
     color: "#0066cc",
@@ -56,6 +31,85 @@ const PORTALS = [
       "https://feeds.folha.uol.com.br/mercado/rss091.xml",
       "https://feeds.folha.uol.com.br/esporte/rss091.xml",
       "https://feeds.folha.uol.com.br/mundo/rss091.xml",
+      "https://feeds.folha.uol.com.br/cotidiano/rss091.xml",
+      "https://feeds.folha.uol.com.br/tec/rss091.xml",
+    ],
+  },
+  {
+    id:    "estadao",
+    name:  "Estadão",
+    color: "#003399",
+    domain: "estadao.com.br",
+    feeds: [
+      // feeds arc/outboundfeeds mantidos (podem funcionar dependendo do servidor)
+      "https://estadao.com.br/arc/outboundfeeds/rss/",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=politica",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=economia",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=esportes",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=internacional",
+      // feeds alternativos no formato antigo (mais estáveis)
+      "https://www.estadao.com.br/rss/ultimas.xml",
+      "https://www.estadao.com.br/rss/economia.xml",
+      "https://www.estadao.com.br/rss/esportes.xml",
+    ],
+  },
+  {
+    id:    "r7",
+    name:  "R7",
+    color: "#cc0000",
+    domain: "r7.com",
+    feeds: [
+      "https://noticias.r7.com/feed.xml",
+      "https://esportes.r7.com/feed.xml",
+    ],
+  },
+  {
+    id:    "jovempan",
+    name:  "Jovem Pan",
+    color: "#ff6600",
+    domain: "jovempan.com.br",
+    feeds: [
+      "https://jovempan.com.br/feed",
+      "https://jovempan.com.br/jpnews/feed",
+    ],
+  },
+  {
+    id:    "gazetadopovo",
+    name:  "Gazeta do Povo",
+    color: "#1a1a2e",
+    domain: "gazetadopovo.com.br",
+    feeds: [
+      "https://www.gazetadopovo.com.br/feed/rss/ultimas-noticias.xml",
+      "https://www.gazetadopovo.com.br/feed/rss/republica.xml",
+      "https://www.gazetadopovo.com.br/feed/rss/economia.xml",
+      "https://www.gazetadopovo.com.br/feed/rss/mundo.xml",
+    ],
+  },
+  {
+    id:    "tecmundo",
+    name:  "TecMundo",
+    color: "#00c853",
+    domain: "tecmundo.com.br",
+    feeds: [
+      "https://rss.tecmundo.com.br/feed",
+    ],
+  },
+  {
+    id:    "olhardigital",
+    name:  "Olhar Digital",
+    color: "#0091ea",
+    domain: "olhardigital.com.br",
+    feeds: [
+      "https://olhardigital.com.br/rss",
+    ],
+  },
+  {
+    id:    "correiobraziliense",
+    name:  "Correio Braziliense",
+    color: "#c62828",
+    domain: "correiobraziliense.com.br",
+    feeds: [
+      "https://www.correiobraziliense.com.br/rss/feed.xml",
     ],
   },
 ];
@@ -111,9 +165,11 @@ function detectCategory(title, link) {
   if (/politi|congresso|senado|câmara|ministro|governo|presidente|eleicao|partido|lula|bolsonaro/.test(t)) return "Política";
   if (/economi|mercado|bolsa|dolar|inflacao|pib|juros|banco|empresa|negocio|petrobras|receita/.test(t))    return "Economia";
   if (/futebol|esporte|campeonato|copa|olimpi|atleta|gol|nba|nfl|tênis|basquete|vôlei/.test(t))            return "Esportes";
-  if (/tecnolog|inteligencia artificial|startup|celular|iphone|android|internet|app|ia |openai/.test(t))   return "Tecnologia";
+  if (/tecnolog|inteligencia artificial|startup|celular|iphone|android|internet|app|ia |openai|tecmundo|olhar digital/.test(t)) return "Tecnologia";
   if (/mundo|internacional|guerra|eua|trump|china|russia|europa|oriente|africa|argentina/.test(t))         return "Mundo";
   if (/entreteni|cinema|musica|serie|celebr|famoso|show|festival|arte|novela|bbb/.test(t))                 return "Entretenimento";
+  if (/saude|medici|hospital|virus|vacina|cancer|doenca|covid/.test(t))                                    return "Saúde";
+  if (/ciencia|pesquisa|descoberta|espaco|nasa|astronomia/.test(t))                                        return "Ciência";
   return "Brasil";
 }
 
@@ -190,29 +246,35 @@ async function fetchPortalNews(portal) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  AGRUPAMENTO SEMÂNTICO VIA CEREBRAS
+//  AGRUPAMENTO SEMÂNTICO VIA IA (prompt mais rigoroso)
 // ══════════════════════════════════════════════════════════════════════════════
 async function groupByTopicAI(allNews) {
   if (allNews.length === 0) return [];
 
   const lista = allNews.map((n, i) => `${i}: [${n.portalId.toUpperCase()}] ${n.titulo}`).join("\n");
 
-  const prompt = `Você é um editor de jornalismo. Lista de notícias recentes de portais brasileiros:
+  const prompt = `Você é um editor-chefe de jornalismo. Sua tarefa é identificar quais notícias cobrem EXATAMENTE o mesmo fato específico.
 
+REGRA FUNDAMENTAL: Só agrupe índices se as notícias tratarem do MESMO EVENTO CONCRETO E ESPECÍFICO. Exemplos:
+- CORRETO agrupar: "Lula sanciona lei X" + "Presidente assina lei X" → mesmo ato
+- ERRADO agrupar: "Crise no governo" + "Reforma ministerial" → eventos diferentes
+- ERRADO agrupar por tema amplo: futebol, política, economia NÃO são grupos válidos
+- ERRADO agrupar: "Bolsa cai 2%" + "Dólar sobe" → eventos distintos mesmo que relacionados
+
+Lista de notícias:
 ${lista}
 
-Agrupe APENAS os índices que cobrem exatamente o MESMO FATO específico (mesmo acidente, jogo, pronunciamento, lei). Não agrupe por tema amplo — "futebol" não é grupo, precisa ser o mesmo jogo.
-
-Responda SOMENTE com JSON puro — array de arrays de índices:
-[[0,3],[1],[2,5,8],[4],...]
-
-Cada índice aparece exatamente uma vez. Sem texto antes ou depois.`;
+Responda SOMENTE com JSON puro — array de arrays de índices numéricos inteiros.
+Cada índice deve aparecer exatamente uma vez.
+Notícias sem par ficam em grupo sozinho: [N]
+Formato obrigatório: [[0,3],[1],[2,5],[4],...]
+Sem texto antes, sem texto depois, sem markdown.`;
 
   try {
     const res = await axios.post(
       CHAT_API,
-      { message: prompt, forceEngine: "cerebras" },
-      { headers: { "Content-Type": "application/json" }, timeout: 25000 }
+      { message: prompt },
+      { headers: { "Content-Type": "application/json" }, timeout: 30000 }
     );
 
     const raw = res.data?.reply || "";
@@ -264,7 +326,10 @@ function groupFallback(allNews) {
     for (let j = i + 1; j < allNews.length; j++) {
       if (used.has(j) || allNews[j].portalId === allNews[i].portalId) continue;
       const wB = allNews[j].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
-      if (wA.filter(w => wB.includes(w)).length >= 3) {
+      // exige 3 palavras em comum E pelo menos 30% de overlap
+      const common = wA.filter(w => wB.includes(w));
+      const minLen = Math.min(wA.length, wB.length);
+      if (common.length >= 3 && (common.length / minLen) >= 0.3) {
         group.items.push(allNews[j]);
         used.add(j);
       }
