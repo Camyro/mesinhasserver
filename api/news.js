@@ -1,84 +1,146 @@
-import OpenAI from "openai";
-import axios  from "axios";
+import axios from "axios";
 
-const client   = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const CHAT_API = "https://mesinhasserver.vercel.app/api/chat";
 
 const PORTALS = [
-  { id: "g1",      name: "G1",      color: "#e8001c", domain: "g1.globo.com",      searchHint: "site:g1.globo.com"      },
-  { id: "sbt",     name: "SBT",     color: "#00529c", domain: "sbt.com.br",         searchHint: "site:sbt.com.br"         },
-  { id: "estadao", name: "Estadão", color: "#1a1a1a", domain: "estadao.com.br",     searchHint: "site:estadao.com.br"     },
-  { id: "band",    name: "Band",    color: "#f5a623", domain: "band.uol.com.br",    searchHint: "site:band.uol.com.br"    },
+  {
+    id:    "g1",
+    name:  "G1",
+    color: "#e8001c",
+    domain: "g1.globo.com",
+    feeds: [
+      "https://g1.globo.com/rss/g1/",
+      "https://g1.globo.com/rss/g1/politica/",
+      "https://g1.globo.com/rss/g1/economia/",
+      "https://g1.globo.com/rss/g1/mundo/",
+      "https://g1.globo.com/rss/g1/esportes/",
+      "https://g1.globo.com/rss/g1/tecnologia/",
+    ],
+  },
+  {
+    id:    "sbt",
+    name:  "SBT",
+    color: "#00529c",
+    domain: "sbt.com.br",
+    feeds: [
+      "https://www.sbt.com.br/jornalismo/rss",
+    ],
+  },
+  {
+    id:    "estadao",
+    name:  "Estadão",
+    color: "#1a1a1a",
+    domain: "estadao.com.br",
+    feeds: [
+      "https://estadao.com.br/arc/outboundfeeds/rss/",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=politica",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=economia",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=esportes",
+      "https://estadao.com.br/arc/outboundfeeds/rss/?hierarchy=internacional",
+    ],
+  },
+  {
+    id:    "band",
+    name:  "Band",
+    color: "#f5a623",
+    domain: "band.uol.com.br",
+    feeds: [
+      "https://www.band.uol.com.br/noticias/rss",
+    ],
+  },
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  EXTRAI JSON ARRAY
+//  PARSE RSS — extrai itens do XML sem dependência externa
 // ══════════════════════════════════════════════════════════════════════════════
-function extractJsonArray(raw) {
-  let s = (raw || "").trim()
-    .replace(/```json\s*/gi, "")
-    .replace(/```\s*/g, "")
-    .trim();
-  const start = s.indexOf("[");
-  const end   = s.lastIndexOf("]");
-  if (start === -1 || end === -1) return null;
-  try { return JSON.parse(s.slice(start, end + 1)); }
-  catch { return null; }
+function parseRSS(xml) {
+  const items = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+  let match;
+
+  while ((match = itemRegex.exec(xml)) !== null) {
+    const block = match[1];
+
+    const get = (tag) => {
+      // Tenta com CDATA primeiro, depois texto simples
+      const cdataRe = new RegExp(`<${tag}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${tag}>`, "i");
+      const plainRe = new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, "i");
+      const c = cdataRe.exec(block);
+      if (c) return c[1].trim();
+      const p = plainRe.exec(block);
+      return p ? p[1].trim() : "";
+    };
+
+    const title   = get("title");
+    const link    = get("link") || get("guid");
+    const pubDate = get("pubDate");
+    const desc    = get("description");
+
+    if (!title || !link) continue;
+
+    items.push({ title, link, pubDate, desc });
+  }
+
+  return items;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BUSCA NOTÍCIAS DE UM PORTAL — ÚLTIMA 1H
+//  FETCH DE UM FEED RSS
 // ══════════════════════════════════════════════════════════════════════════════
-async function fetchNewsFromPortal(portal) {
-  const now  = new Date();
-  const hora = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  const hoje = now.toLocaleDateString("pt-BR");
-
-  const prompt = `Agora são ${hora} de ${hoje} (horário de Brasília).
-
-Faça uma busca web usando "${portal.searchHint}" para encontrar as notícias MAIS RECENTES publicadas nos últimos 60 minutos no portal ${portal.name}.
-
-REGRAS OBRIGATÓRIAS:
-1. SOMENTE notícias publicadas ou atualizadas nos últimos 60 minutos. Se não houver suficientes, expanda para 2 horas. NUNCA inclua notícias de ontem ou mais antigas.
-2. Busque ativamente nas seções: home, últimas notícias, breaking news do ${portal.domain}.
-3. Verifique o timestamp de cada notícia — inclua apenas as com "há X minutos" ou "há 1 hora" ou horário compatível com os últimos 60min.
-4. Traga o MÁXIMO possível de notícias (mínimo 5, sem limite máximo).
-5. Os links devem ser URLs REAIS e completas do ${portal.domain} — não invente links.
-
-Responda SOMENTE com um array JSON válido, sem markdown, sem texto extra:
-[{"titulo":"...","resumo":"2-3 frases do conteúdo real","categoria":"Política|Economia|Esportes|Tecnologia|Brasil|Mundo|Entretenimento","link":"https://${portal.domain}/...","hora":"há X minutos","portal":"${portal.name}","portalId":"${portal.id}"}]`;
-
+async function fetchFeed(url) {
   try {
-    const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      tools: [{ type: "web_search_preview" }],
-      tool_choice: { type: "web_search_preview" },
-      input: prompt,
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; NewsAggregator/1.0)",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+      },
     });
-
-    const raw   = response.output_text || "";
-    const items = extractJsonArray(raw);
-    if (!items || items.length === 0) {
-      console.warn(`${portal.name}: sem itens JSON na resposta`);
-      return [];
-    }
-
-    const result = items
-      .filter(i => i && i.titulo && i.titulo.length > 5)
-      .map(i => ({
-        ...i,
-        portal:      portal.name,
-        portalId:    portal.id,
-        portalColor: portal.color,
-        link:        i.link?.startsWith("http") ? i.link : `https://${portal.domain}`,
-      }));
-
-    console.log(`${portal.name}: ${result.length} notícias da última 1h`);
-    return result;
-
+    return parseRSS(res.data || "");
   } catch (e) {
-    console.error(`${portal.name}: erro —`, e?.message || e);
+    console.warn(`Feed falhou (${url}): ${e.message}`);
     return [];
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DETECTA CATEGORIA PELO LINK / TÍTULO
+// ══════════════════════════════════════════════════════════════════════════════
+function detectCategory(title, link) {
+  const t = (title + " " + link).toLowerCase();
+  if (/politi|congresso|senado|câmara|ministro|governo|presidente|eleicao|partido/.test(t)) return "Política";
+  if (/economi|mercado|bolsa|dolar|inflacao|pib|juros|banco|empresa|negocio/.test(t))        return "Economia";
+  if (/futebol|esporte|campeonato|copa|olimpi|atleta|jogo|placar|gol|nba|nfl/.test(t))       return "Esportes";
+  if (/tecnolog|inteligencia|ia|startup|celular|iphone|android|internet|app/.test(t))        return "Tecnologia";
+  if (/mundo|internacional|guerra|eua|china|russia|europa|oriente|africa/.test(t))           return "Mundo";
+  if (/entreteni|cinema|musica|serie|celebr|famoso|show|festival|arte/.test(t))              return "Entretenimento";
+  return "Brasil";
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  FILTRA NOTÍCIAS DAS ÚLTIMAS N HORAS
+// ══════════════════════════════════════════════════════════════════════════════
+function withinHours(pubDate, hours) {
+  if (!pubDate) return true; // sem data = inclui por segurança
+  try {
+    const d = new Date(pubDate);
+    if (isNaN(d.getTime())) return true;
+    return (Date.now() - d.getTime()) <= hours * 3_600_000;
+  } catch {
+    return true;
+  }
+}
+
+function formatAge(pubDate) {
+  if (!pubDate) return "";
+  try {
+    const diff = Math.floor((Date.now() - new Date(pubDate).getTime()) / 60000);
+    if (diff < 1)  return "agora mesmo";
+    if (diff < 60) return `há ${diff} min`;
+    const h = Math.floor(diff / 60);
+    return `há ${h}h`;
+  } catch {
+    return "";
   }
 }
 
@@ -96,109 +158,135 @@ function dedup(items) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  AGRUPAMENTO SEMÂNTICO VIA IA (Cerebras via /api/chat existente)
+//  BUSCA TODOS OS FEEDS DE UM PORTAL E FILTRA ÚLTIMA 1H (fallback 3h)
+// ══════════════════════════════════════════════════════════════════════════════
+async function fetchPortalNews(portal) {
+  const feedResults = await Promise.all(portal.feeds.map(fetchFeed));
+  const allItems = feedResults.flat();
+
+  // Tenta 1h primeiro; se vier vazio, aceita 3h
+  let filtered = allItems.filter(i => withinHours(i.pubDate, 1));
+  if (filtered.length < 3) filtered = allItems.filter(i => withinHours(i.pubDate, 3));
+
+  const news = filtered.map(item => ({
+    titulo:     item.title,
+    resumo:     item.desc
+                  ? item.desc.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 300)
+                  : item.title,
+    categoria:  detectCategory(item.title, item.link),
+    link:       item.link,
+    hora:       formatAge(item.pubDate),
+    pubDate:    item.pubDate,
+    portal:     portal.name,
+    portalId:   portal.id,
+    portalColor: portal.color,
+  }));
+
+  // Ordena mais recentes primeiro
+  news.sort((a, b) => {
+    const da = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+    const db = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+    return db - da;
+  });
+
+  console.log(`${portal.name}: ${news.length} notícias (de ${allItems.length} no feed)`);
+  return news;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AGRUPAMENTO SEMÂNTICO VIA CEREBRAS
 // ══════════════════════════════════════════════════════════════════════════════
 async function groupByTopicAI(allNews) {
   if (allNews.length === 0) return [];
 
-  const lista = allNews.map((n, i) => `${i}: [${n.portalId.toUpperCase()}] ${n.titulo}`).join("\n");
+  const lista = allNews
+    .map((n, i) => `${i}: [${n.portalId.toUpperCase()}] ${n.titulo}`)
+    .join("\n");
 
-  const prompt = `Você é um editor de jornalismo. Abaixo há uma lista numerada de títulos de notícias de diferentes portais brasileiros publicadas na última hora.
+  const prompt = `Você é um editor de jornalismo. Liste de títulos de notícias brasileiras recentes de diferentes portais:
 
-Agrupe os títulos que cobrem EXATAMENTE O MESMO FATO ou evento. Dois títulos só devem estar no mesmo grupo se tratam do mesmo acontecimento específico — não agrupe por tema geral (ex: "futebol" não é grupo; tem que ser o mesmo jogo ou anúncio específico).
-
-Títulos:
 ${lista}
 
-Responda SOMENTE com um array JSON onde cada elemento é um array de índices do mesmo grupo:
-[[0,3,7],[1],[2,5],[4,6,8],...]
+Agrupe os índices que cobrem EXATAMENTE O MESMO FATO específico. Não agrupe por tema geral — só pelo mesmo acontecimento concreto (mesmo acidente, mesmo jogo, mesmo pronunciamento, mesma lei).
 
-Regras:
-- Cada índice deve aparecer exatamente uma vez
-- Grupos com um único item são normais e esperados
-- Não agrupe por tema amplo, apenas por fato específico idêntico
-- Retorne apenas o JSON puro, sem texto antes ou depois`;
+Responda SOMENTE com JSON puro — array de arrays de índices:
+[[0,3],[1],[2,5,8],[4],...]
+
+Cada índice aparece exatamente uma vez. Sem texto antes ou depois.`;
 
   try {
     const res = await axios.post(
       CHAT_API,
       { message: prompt, forceEngine: "cerebras" },
-      { headers: { "Content-Type": "application/json" }, timeout: 30000 }
+      { headers: { "Content-Type": "application/json" }, timeout: 25000 }
     );
 
     const raw    = res.data?.reply || "";
-    const groups = extractJsonArray(raw);
+    const groups = (() => {
+      // extractJsonArray inline
+      let s = raw.trim().replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      const st = s.indexOf("["), en = s.lastIndexOf("]");
+      if (st === -1 || en === -1) return null;
+      try { return JSON.parse(s.slice(st, en + 1)); } catch { return null; }
+    })();
 
-    if (!groups || !Array.isArray(groups) || groups.length === 0) {
-      console.warn("groupByTopicAI: resposta inválida — usando fallback");
-      return groupByTopicFallback(allNews);
-    }
+    if (!groups || !Array.isArray(groups)) throw new Error("JSON inválido");
 
-    const usedIndices = new Set();
+    const used   = new Set();
     const result = [];
 
     for (const group of groups) {
       if (!Array.isArray(group)) continue;
-      const valid = group.filter(i => Number.isInteger(i) && i >= 0 && i < allNews.length && !usedIndices.has(i));
-      if (valid.length === 0) continue;
-      valid.forEach(i => usedIndices.add(i));
-      result.push({
-        id:        `g${result.length}`,
-        items:     valid.map(i => allNews[i]),
-        categoria: allNews[valid[0]].categoria,
-      });
+      const valid = group.filter(i => Number.isInteger(i) && i >= 0 && i < allNews.length && !used.has(i));
+      if (!valid.length) continue;
+      valid.forEach(i => used.add(i));
+      result.push({ id: `g${result.length}`, items: valid.map(i => allNews[i]), categoria: allNews[valid[0]].categoria });
     }
 
-    // Itens não incluídos pelo modelo (segurança)
+    // Itens que o modelo não colocou em nenhum grupo
     for (let i = 0; i < allNews.length; i++) {
-      if (!usedIndices.has(i)) {
+      if (!used.has(i))
         result.push({ id: `g${result.length}`, items: [allNews[i]], categoria: allNews[i].categoria });
-      }
     }
 
     return result.sort((a, b) => b.items.length - a.items.length);
 
   } catch (e) {
-    console.warn("groupByTopicAI: erro —", e?.message, "— usando fallback");
-    return groupByTopicFallback(allNews);
+    console.warn("groupByTopicAI falhou, usando fallback:", e.message);
+    return groupFallback(allNews);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  FALLBACK: agrupamento por palavras (caso Cerebras falhe)
+//  FALLBACK: agrupamento por palavras-chave (sem IA)
 // ══════════════════════════════════════════════════════════════════════════════
-function groupByTopicFallback(allNews) {
-  const groups = [];
-  const used   = new Set();
-  const stop   = new Set([
+function groupFallback(allNews) {
+  const stop = new Set([
     "de","do","da","dos","das","no","na","nos","nas","em","com","que","por",
     "para","os","as","um","uma","ao","à","é","e","o","a","se","já","após",
     "mais","sobre","pelo","pela","entre","isso","este","essa","seus","suas",
   ]);
+  const used   = new Set();
+  const result = [];
 
   for (let i = 0; i < allNews.length; i++) {
     if (used.has(i)) continue;
-    const item  = allNews[i];
-    const group = { id: `g${i}`, items: [item], categoria: item.categoria };
+    const group = { id: `g${i}`, items: [allNews[i]], categoria: allNews[i].categoria };
     used.add(i);
+    const wA = allNews[i].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
 
     for (let j = i + 1; j < allNews.length; j++) {
-      if (used.has(j)) continue;
-      const other  = allNews[j];
-      if (other.portalId === item.portalId) continue;
-      const wA     = item.titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
-      const wB     = other.titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
-      const shared = wA.filter(w => wB.includes(w));
-      if (shared.length >= 3) {
-        group.items.push(other);
+      if (used.has(j) || allNews[j].portalId === allNews[i].portalId) continue;
+      const wB = allNews[j].titulo.toLowerCase().split(/\W+/).filter(w => w.length > 4 && !stop.has(w));
+      if (wA.filter(w => wB.includes(w)).length >= 3) {
+        group.items.push(allNews[j]);
         used.add(j);
       }
     }
-
-    groups.push(group);
+    result.push(group);
   }
 
-  return groups.sort((a, b) => b.items.length - a.items.length);
+  return result.sort((a, b) => b.items.length - a.items.length);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -213,16 +301,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Método não permitido" });
 
   try {
-    // 1. Busca os 4 portais em paralelo
-    const results = await Promise.all(PORTALS.map(fetchNewsFromPortal));
+    // 1. Todos os portais em paralelo via RSS
+    const results = await Promise.all(PORTALS.map(fetchPortalNews));
     const allNews = dedup(results.flat());
 
-    console.log(`Total após dedup: ${allNews.length} notícias`);
+    console.log(`Total: ${allNews.length} notícias após dedup`);
 
     if (allNews.length === 0)
-      return res.status(503).json({
-        error: "Nenhuma notícia encontrada na última hora. Tente novamente em alguns minutos.",
-      });
+      return res.status(503).json({ error: "Feeds RSS indisponíveis no momento. Tente novamente." });
 
     // 2. Agrupamento semântico via Cerebras
     const groups = await groupByTopicAI(allNews);
@@ -230,13 +316,13 @@ export default async function handler(req, res) {
     return res.status(200).json({
       groups,
       allNews,
-      portals: PORTALS,
+      portals:   PORTALS,
       fetchedAt: new Date().toISOString(),
-      total: allNews.length,
+      total:     allNews.length,
     });
 
   } catch (err) {
     console.error("ERRO /api/news:", err?.message || err);
-    return res.status(500).json({ error: "Erro interno ao buscar notícias." });
+    return res.status(500).json({ error: "Erro interno." });
   }
 }
