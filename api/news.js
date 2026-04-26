@@ -9,6 +9,15 @@ const PORTALS = [
   { id: "band",    name: "Band",    color: "#f5a623", domain: "band.uol.com.br" },
 ];
 
+// Cada portal é varrido por estas fatias de categoria.
+// Múltiplas buscas em paralelo = cobertura total das 24h sem estourar o limite de tokens por resposta.
+const CATEGORY_SLICES = [
+  "Política e Economia",
+  "Brasil e Mundo",
+  "Esportes",
+  "Tecnologia e Entretenimento",
+];
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  EXTRAI JSON ARRAY DA RESPOSTA DO MODELO
 // ══════════════════════════════════════════════════════════════════════════════
@@ -25,20 +34,19 @@ function extractJsonArray(raw) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BUSCA NOTÍCIAS DE UM PORTAL VIA OPENAI + WEB SEARCH
+//  UMA BUSCA: portal + fatia de categoria
 // ══════════════════════════════════════════════════════════════════════════════
-async function fetchNewsFromPortal(portal) {
-  const hoje = new Date().toLocaleDateString("pt-BR");
+async function fetchSlice(portal, categorySlice, hoje) {
+  const prompt = `Hoje é ${hoje}. Pesquise na web as notícias mais importantes e recentes das últimas 24 horas publicadas no portal ${portal.name} (${portal.domain}) sobre as categorias: ${categorySlice}.
 
-  const prompt = `Hoje é ${hoje}. Pesquise na web as 6 notícias mais recentes publicadas na última 1 hora (ou nas últimas 6 horas se não houver suficientes) no portal ${portal.name} (${portal.domain}).
-
+Traga o MÁXIMO de notícias que conseguir encontrar (mínimo 8, sem limite superior).
 Responda SOMENTE com um array JSON válido, sem markdown, sem texto extra.
 Cada item deve ter exatamente estes campos:
 - titulo: string (título original da notícia)
 - resumo: string (2-3 frases resumindo o conteúdo)
 - categoria: string (Política, Economia, Esportes, Tecnologia, Brasil, Mundo ou Entretenimento)
 - link: string (URL completa e real da notícia em ${portal.domain})
-- hora: string (ex: "há 2 horas" ou "14h30")
+- hora: string (ex: "há 2 horas", "há 8 horas" ou "14h30")
 - portal: "${portal.name}"
 - portalId: "${portal.id}"
 
@@ -51,31 +59,55 @@ Retorne apenas o array JSON puro, sem nenhum texto antes ou depois.`;
       input: prompt,
     });
 
-    // Extrai o texto da resposta (output_text já é o conteúdo final)
     const raw = response.output_text || "";
-
     const items = extractJsonArray(raw);
-    if (items && items.length > 0) {
-      console.log(`${portal.name}: ${items.length} notícias encontradas`);
-      return items
-        .filter(i => i && i.titulo)
-        .slice(0, 6)
-        .map(i => ({
-          ...i,
-          portal:      portal.name,
-          portalId:    portal.id,
-          portalColor: portal.color,
-          link:        i.link || `https://${portal.domain}`,
-        }));
-    }
+    if (!items || items.length === 0) return [];
 
-    console.warn(`${portal.name}: resposta sem JSON válido`);
-    return [];
-
+    return items
+      .filter(i => i && i.titulo)
+      .map(i => ({
+        ...i,
+        portal:      portal.name,
+        portalId:    portal.id,
+        portalColor: portal.color,
+        link:        i.link || `https://${portal.domain}`,
+      }));
   } catch (e) {
-    console.error(`${portal.name}: erro na busca —`, e?.message || e);
+    console.error(`${portal.name} [${categorySlice}]: erro —`, e?.message || e);
     return [];
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DEDUPLICAÇÃO POR TÍTULO (remove duplicatas entre fatias do mesmo portal)
+// ══════════════════════════════════════════════════════════════════════════════
+function dedup(items) {
+  const seen = new Set();
+  return items.filter(item => {
+    // Normaliza o título para comparação: minúsculas, sem pontuação, sem espaços duplos
+    const key = item.titulo.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  BUSCA TODAS AS FATIAS DE UM PORTAL EM PARALELO
+// ══════════════════════════════════════════════════════════════════════════════
+async function fetchNewsFromPortal(portal) {
+  const hoje = new Date().toLocaleDateString("pt-BR");
+
+  // Todas as fatias de categoria em paralelo
+  const sliceResults = await Promise.all(
+    CATEGORY_SLICES.map(slice => fetchSlice(portal, slice, hoje))
+  );
+
+  const raw = sliceResults.flat();
+  const unique = dedup(raw);
+
+  console.log(`${portal.name}: ${unique.length} notícias únicas (${raw.length} brutas)`);
+  return unique;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
