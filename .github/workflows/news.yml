@@ -1,0 +1,32 @@
+name: Fetch News
+
+on:
+  schedule:
+    # Roda a cada 30 minutos
+    - cron: '*/30 * * * *'
+  # Permite rodar manualmente pela aba Actions do GitHub
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Executar fetchNews.js
+        run: node scripts/fetchNews.js
+        env:
+          GH_TOKEN:      ${{ secrets.GH_TOKEN }}
+          NEWSDATA_KEY:  ${{ secrets.NEWSDATA_KEY }}
+          GNEWS_KEY:     ${{ secrets.GNEWS_KEY }}
