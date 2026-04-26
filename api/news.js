@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const CHAT_API = "https://mesinhasserver/api/chat";
+const CHAT_API = "https://mesinhasserver.vercel.app/api/chat";
 
 const PORTALS = [
   { id: "g1",      name: "G1",      color: "#e8001c", domain: "g1.globo.com"    },
@@ -10,68 +10,98 @@ const PORTALS = [
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BUSCA NOTÍCIAS DE UM PORTAL VIA MISTRAL + WEB SEARCH
+//  EXTRAI JSON ARRAY DA RESPOSTA DO MODELO
+// ══════════════════════════════════════════════════════════════════════════════
+function extractJsonArray(raw) {
+  let s = (raw || "").trim()
+    .replace(/```json\s*/gi, "")
+    .replace(/```\s*/g, "")
+    .trim();
+  const start = s.indexOf("[");
+  const end   = s.lastIndexOf("]");
+  if (start === -1 || end === -1) return null;
+  try { return JSON.parse(s.slice(start, end + 1)); }
+  catch { return null; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CHAMA A API DE CHAT COM UM ENGINE ESPECÍFICO
+// ══════════════════════════════════════════════════════════════════════════════
+async function callChat(message, forceEngine, webSearch = false) {
+  const res = await axios.post(
+    CHAT_API,
+    { message, forceEngine, webSearch },
+    { headers: { "Content-Type": "application/json" }, timeout: 55000 }
+  );
+  return res.data?.reply || "";
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  BUSCA NOTÍCIAS DE UM PORTAL
+//  Tenta: 1) Mistral + web search  2) Cerebras com contexto de data
 // ══════════════════════════════════════════════════════════════════════════════
 async function fetchNewsFromPortal(portal) {
-  const prompt = `Busque as 6 notícias mais recentes e importantes do portal ${portal.name} (${portal.domain}).
-Para cada notícia retorne um JSON com os campos:
-- titulo: string
-- resumo: string (2-3 frases)
-- categoria: string (ex: Política, Economia, Esportes, Tecnologia, Brasil, Mundo, Entretenimento)
-- link: string (URL real da notícia no ${portal.domain})
-- hora: string (quando foi publicada, ex: "há 2 horas" ou horário)
+  const hoje = new Date().toLocaleDateString("pt-BR");
+
+  const prompt = `Hoje é ${hoje}. Busque as 6 notícias mais recentes e importantes publicadas hoje ou ontem no portal ${portal.name} (${portal.domain}).
+
+Responda SOMENTE com um array JSON válido, sem markdown, sem texto extra, sem explicações.
+Cada item deve ter exatamente estes campos:
+- titulo: string (título da notícia)
+- resumo: string (2-3 frases resumindo a notícia)
+- categoria: string (Política, Economia, Esportes, Tecnologia, Brasil, Mundo ou Entretenimento)
+- link: string (URL completa da notícia em ${portal.domain})
+- hora: string (ex: "há 2 horas" ou "14h30")
 - portal: "${portal.name}"
 - portalId: "${portal.id}"
 
-Responda SOMENTE com um array JSON válido, sem markdown, sem explicações, sem texto extra.
-Exemplo: [{"titulo":"...", "resumo":"...", "categoria":"...", "link":"...", "hora":"...", "portal":"${portal.name}", "portalId":"${portal.id}"}]`;
+Formato esperado:
+[{"titulo":"...","resumo":"...","categoria":"...","link":"https://${portal.domain}/...","hora":"...","portal":"${portal.name}","portalId":"${portal.id}"}]`;
 
+  // Tentativa 1: Mistral com web search
   try {
-    const res = await axios.post(
-      CHAT_API,
-      { message: prompt, forceEngine: "mistral", webSearch: true },
-      { headers: { "Content-Type": "application/json" }, timeout: 50000 }
-    );
-
-    const raw = res.data?.reply || "";
-    let jsonStr = raw.trim()
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim();
-
-    const start = jsonStr.indexOf("[");
-    const end   = jsonStr.lastIndexOf("]");
-    if (start === -1 || end === -1) throw new Error("JSON array não encontrado na resposta");
-    jsonStr = jsonStr.slice(start, end + 1);
-
-    const items = JSON.parse(jsonStr);
-
-    return items
-      .filter((i) => i && i.titulo)
-      .slice(0, 6)
-      .map((i) => ({
-        ...i,
-        portal:      portal.name,
-        portalId:    portal.id,
-        portalColor: portal.color,
-        link:        i.link || `https://${portal.domain}`,
-      }));
+    const reply = await callChat(prompt, "mistral", true);
+    const items = extractJsonArray(reply);
+    if (items && items.length > 0) {
+      console.log(`${portal.name}: ${items.length} notícias via Mistral`);
+      return items
+        .filter(i => i && i.titulo)
+        .slice(0, 6)
+        .map(i => ({ ...i, portal: portal.name, portalId: portal.id, portalColor: portal.color, link: i.link || `https://${portal.domain}` }));
+    }
+    console.warn(`${portal.name}: Mistral retornou JSON inválido, tentando Cerebras...`);
   } catch (e) {
-    console.error(`Erro ao buscar ${portal.name}:`, e.message);
-    return [];
+    console.warn(`${portal.name}: Mistral falhou (${e.message}), tentando Cerebras...`);
   }
+
+  // Tentativa 2: Cerebras (sem web search, usa conhecimento recente)
+  try {
+    const reply = await callChat(prompt, "cerebras", false);
+    const items = extractJsonArray(reply);
+    if (items && items.length > 0) {
+      console.log(`${portal.name}: ${items.length} notícias via Cerebras`);
+      return items
+        .filter(i => i && i.titulo)
+        .slice(0, 6)
+        .map(i => ({ ...i, portal: portal.name, portalId: portal.id, portalColor: portal.color, link: i.link || `https://${portal.domain}` }));
+    }
+  } catch (e) {
+    console.error(`${portal.name}: Cerebras também falhou (${e.message})`);
+  }
+
+  return [];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  AGRUPAMENTO POR ASSUNTO
 // ══════════════════════════════════════════════════════════════════════════════
 function groupByTopic(allNews) {
-  const groups = [];
-  const used   = new Set();
+  const groups   = [];
+  const used     = new Set();
   const stopWords = new Set([
-    "de","do","da","dos","das","no","na","nos","nas","em","com",
-    "que","por","para","os","as","um","uma","ao","à","é","e","o","a",
-    "se","já","após","mais","sobre","pelo","pela","entre","isso","este",
+    "de","do","da","dos","das","no","na","nos","nas","em","com","que","por",
+    "para","os","as","um","uma","ao","à","é","e","o","a","se","já","após",
+    "mais","sobre","pelo","pela","entre","isso","este","essa","seus","suas",
   ]);
 
   for (let i = 0; i < allNews.length; i++) {
@@ -113,11 +143,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Método não permitido", model: "-" });
 
   try {
+    // Busca os 4 portais em paralelo
     const results = await Promise.all(PORTALS.map(fetchNewsFromPortal));
     const allNews = results.flat();
 
+    console.log(`Total de notícias coletadas: ${allNews.length}`);
+
     if (allNews.length === 0)
-      return res.status(503).json({ error: "Nenhuma notícia encontrada. Tente novamente." });
+      return res.status(503).json({ error: "Nenhuma notícia encontrada. O limite do Mistral pode ter sido atingido. Tente novamente em alguns minutos." });
 
     const groups = groupByTopic(allNews);
 
@@ -128,6 +161,7 @@ export default async function handler(req, res) {
       fetchedAt: new Date().toISOString(),
       total: allNews.length,
     });
+
   } catch (err) {
     console.error("ERRO /api/news:", err?.response?.data || err.message || err);
     return res.status(500).json({ error: "Erro interno ao buscar notícias." });
